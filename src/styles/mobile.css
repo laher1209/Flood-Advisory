@@ -1,0 +1,24 @@
+/* Mobile Device Shell & Viewport Custom Styles */
+.mobile-shell {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+/* Hide scrollbar for standard mobile viewport appearance */
+.mobile-no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Simulated Mobile Speaker Notch */
+.speaker-notch {
+  width: 60px;
+  height: 4px;
+  background-color: #334155;
+  border-radius: 9999px;
+  margin: 0 auto;
+}

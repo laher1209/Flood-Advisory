@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FloodSafe - Cross-Platform Dashboard</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 500: '#2563eb', 600: '#1d4ed8', 700: '#1e40af', 900: '#0b192c' }
+          }
+        }
+      }
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Plus Jakarta Sans', sans-serif; background: #0f172a; overflow: hidden; height: 100vh; }
+
+    /* Custom scrollbars */
+    .scroll-area { overflow-y: auto; overflow-x: hidden; }
+    .scroll-area::-webkit-scrollbar { width: 5px; }
+    .scroll-area::-webkit-scrollbar-track { background: #f1f5f9; }
+    .scroll-area::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    .mobile-scroll::-webkit-scrollbar { display: none; }
+
+    /* Map styles */
+    .map-canvas-bg {
+      background-color: #e5ece5;
+      background-image:
+        radial-gradient(#c8d8c8 1.5px, transparent 1.5px),
+        linear-gradient(to right, rgba(210,222,210,0.4) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(210,222,210,0.4) 1px, transparent 1px);
+      background-size: 24px 24px, 48px 48px, 48px 48px;
+      position: relative;
+    }
+    .river-path {
+      position: absolute; width: 140%; height: 70px;
+      background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 50%, #2563eb 100%);
+      transform: rotate(38deg); top: 35%; left: -20%; opacity: 0.65;
+      filter: blur(1px); border-radius: 40px;
+    }
+    .heatmap-severe {
+      background: radial-gradient(circle, rgba(239,68,68,0.75) 0%, rgba(249,115,22,0.6) 45%, rgba(234,179,8,0.35) 70%, transparent 100%);
+      filter: blur(2px);
+    }
+
+    /* Animations */
+    @keyframes pulse-ring { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.3);opacity:0.6} }
+    .pulse-ring { animation: pulse-ring 1.5s ease-in-out infinite; }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    .fade-in { animation: fadeIn 0.25s ease-out; }
+    @keyframes ping { 0%{transform:scale(1);opacity:1} 75%,100%{transform:scale(2);opacity:0} }
+    .animate-ping { animation: ping 1s cubic-bezier(0,0,0.2,1) infinite; }
+
+    /* Toast */
+    .toast { position: fixed; bottom: 24px; right: 24px; z-index: 9999; background: #0f172a; color: #fff;
+      font-size: 12px; padding: 12px 20px; border-radius: 12px; border: 1px solid #334155;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4); max-width: 360px; }
+
+    /* Page layout */
+    .app-layout { display: flex; height: 100vh; width: 100%; }
+    .sidebar { width: 256px; min-width: 256px; height: 100vh; overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between; }
+    .main-area { flex: 1; min-width: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    .page-content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 24px; }
+    .page-content::-webkit-scrollbar { width: 5px; }
+    .page-content::-webkit-scrollbar-track { background: #f1f5f9; }
+    .page-content::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+
+    /* Mobile shell */
+    .mobile-shell { -webkit-tap-highlight-color: transparent; user-select: none; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useCallback } = React;
+
+/* ────────────────────────────────── DATA ────────────────────────────────── */
+const SIDEBAR_ITEMS = [
+  { id: 'dashboard',  label: 'Dashboard',       icon: '🏠' },
+  { id: 'map',        label: 'Map View',         icon: '🗺️' },
+  { id: 'alerts',     label: 'Alerts',           icon: '🚨' },
+  { id: 'shelters',   label: 'Shelters Nearby',  icon: '🏫' },
+  { id: 'route',      label: 'Best Route',       icon: '🧭' },
+  { id: 'forecast',   label: 'Forecast',         icon: '🌤️' },
+  { id: 'risk-zones', label: 'Risk Zones',       icon: '⚠️' },
+  { id: 'emergency',  label: 'Emergency Info',   icon: 'ℹ️' },
+  { id: 'settings',   label: 'Settings',         icon: '⚙️' },
+];
+
+const ALERTS = [
+  { id:1, title:'High Water Level Alert', location:'Riverside Area', time:'2 hours ago', severity:'red', desc:'Water levels have exceeded the danger threshold of 8.5m. Immediate evacuation advised for riverside zones.' },
+  { id:2, title:'Flash Flood Warning', location:'Green Park', time:'4 hours ago', severity:'amber', desc:'Rapid onset flooding predicted within the next 2 hours. Residents should move to higher ground immediately.' },
+  { id:3, title:'Heavy Rainfall Forecast', location:'Kailash Nagar', time:'6 hours ago', severity:'blue', desc:'Forecast shows 180mm rainfall in 24 hours. Drains and low-lying areas are at high risk of overflow.' },
+  { id:4, title:'River Level Rising', location:'Main River (Sector 3)', time:'8 hours ago', severity:'cyan', desc:'Steady rise of 0.3m/hour observed. Monitoring teams deployed. Potential flood alert in 6–8 hours.' },
+  { id:5, title:'Evacuation Order Issued', location:'Sunset Colony', time:'12 hours ago', severity:'red', desc:'Mandatory evacuation order for Sunset Colony blocks A–D. Buses dispatched. Report to Govt High School.' },
+];
+
+const SHELTERS = [
+  { id:1, name:'Government High School', distance:'1.2 km', capacity:200, occupied:140, status:'Open', lat:'30.9010', lng:'75.8573' },
+  { id:2, name:'Community Hall Center', distance:'2.8 km', capacity:150, occupied:60, status:'Open', lat:'30.9080', lng:'75.8620' },
+  { id:3, name:'District Sports Complex', distance:'4.1 km', capacity:350, occupied:120, status:'Open', lat:'30.8990', lng:'75.8490' },
+  { id:4, name:'Municipal Corporation Hall', distance:'5.3 km', capacity:180, occupied:178, status:'Near Full', lat:'30.9130', lng:'75.8710' },
+  { id:5, name:'Model Town Community Centre', distance:'6.8 km', capacity:120, occupied:0, status:'Standby', lat:'30.8950', lng:'75.8450' },
+];
+
+const FORECAST = [
+  { day:'Mon', date:'14 Jul', emoji:'🌧️', high:31, low:24, rain:'85%', desc:'Heavy Rain', wind:'18 km/h' },
+  { day:'Tue', date:'15 Jul', emoji:'⛈️', high:28, low:22, rain:'92%', desc:'Thunderstorm', wind:'25 km/h' },
+  { day:'Wed', date:'16 Jul', emoji:'🌦️', high:29, low:23, rain:'60%', desc:'Showers', wind:'15 km/h' },
+  { day:'Thu', date:'17 Jul', emoji:'🌧️', high:27, low:21, rain:'78%', desc:'Heavy Rain', wind:'20 km/h' },
+  { day:'Fri', date:'18 Jul', emoji:'⛅', high:30, low:22, rain:'30%', desc:'Partly Cloudy', wind:'12 km/h' },
+  { day:'Sat', date:'19 Jul', emoji:'🌤️', high:33, low:24, rain:'15%', desc:'Mostly Sunny', wind:'10 km/h' },
+  { day:'Sun', date:'20 Jul', emoji:'☀️', high:35, low:25, rain:'5%', desc:'Clear Sky', wind:'8 km/h' },
+];
+
+const RISK_ZONES = [
+  { id:1, zone:'Riverside Sector A', risk:'Severe', color:'red', desc:'Active flooding. Do not enter.', affected: 2340 },
+  { id:2, zone:'Green Park Block B', risk:'High', color:'orange', desc:'Flood risk within 6 hours.', affected: 1200 },
+  { id:3, zone:'Kailash Nagar', risk:'Moderate', color:'amber', desc:'Monitor closely. Prepare to evacuate.', affected: 890 },
+  { id:4, zone:'Sunset Colony', risk:'Moderate', color:'amber', desc:'Water accumulation detected in streets.', affected: 760 },
+  { id:5, zone:'Model Town Phase 2', risk:'Low', color:'emerald', desc:'No immediate threat. Stay alert.', affected: 0 },
+  { id:6, zone:'Sector 9 Extension', risk:'Low', color:'emerald', desc:'Safe zone. Evacuation not required.', affected: 0 },
+];
+
+const EMERGENCY_CONTACTS = [
+  { id:1, emoji:'🚨', title:'Disaster Management Helpline', desc:'24/7 Government Emergency Line', phone:'112', color:'red' },
+  { id:2, emoji:'🚑', title:'Medical Evacuation (Ambulance)', desc:'Emergency Medical Services', phone:'108', color:'emerald' },
+  { id:3, emoji:'🚤', title:'Flood Boat Rescue', desc:'NDRF Water Rescue Operations', phone:'1077', color:'blue' },
+  { id:4, emoji:'🔥', title:'Fire & Rescue Services', desc:'Fire Department Emergency', phone:'101', color:'orange' },
+  { id:5, emoji:'👮', title:'Police Control Room', desc:'Law Enforcement Emergency', phone:'100', color:'purple' },
+  { id:6, emoji:'🏥', title:'Blood Bank & Hospital', desc:'Civil Hospital Ludhiana', phone:'0161-2402345', color:'pink' },
+];
+
+/* ─────────────────────────────── SHARED COMPONENTS ──────────────────────── */
+
+function SectionCard({ title, subtitle, children, action, onAction }) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+        <div>
+          <h2 className="font-bold text-slate-800 text-sm">{title}</h2>
+          {subtitle && <p className="text-[11px] text-slate-400 mt-0.5">{subtitle}</p>}
+        </div>
+        {action && (
+          <button onClick={onAction} className="text-xs text-blue-600 font-semibold hover:text-blue-700">{action} →</button>
+        )}
+      </div>
+      <div className="p-5">{children}</div>
+    </div>
+  );
+}
+
+function Badge({ color, children }) {
+  const colors = {
+    red: 'bg-red-100 text-red-700', amber: 'bg-amber-100 text-amber-700',
+    orange: 'bg-orange-100 text-orange-700', emerald: 'bg-emerald-100 text-emerald-700',
+    blue: 'bg-blue-100 text-blue-700', cyan: 'bg-cyan-100 text-cyan-700',
+    purple: 'bg-purple-100 text-purple-700', pink: 'bg-pink-100 text-pink-700',
+  };
+  return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold ${colors[color] || colors.blue}`}>{children}</span>;
+}
+
+/* ────────────────────── WEB PAGES ───────────────────── */
+
+function DashboardPage({ onNavigate, onNotify }) {
+  return (
+    <div className="space-y-6 fade-in pb-8">
+      {/* Greeting */}
+      <div>
+        <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+          Good Morning, Adeel <span className="text-2xl">👋</span>
+        </h2>
+        <p className="text-xs text-slate-500 mt-0.5">Here's the latest flood information for your area — Mon, 14 Jul 2025</p>
+      </div>
+
+      {/* Metric Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { label:'Active Alerts', value:3, icon:'🚨', color:'red', action:'View Alerts', tab:'alerts' },
+          { label:'Affected Areas', value:5, icon:'🗺️', color:'amber', action:'View Map', tab:'map' },
+          { label:'Rising Water Levels', value:2, icon:'📈', color:'blue', action:'Check Details', tab:'risk-zones' },
+          { label:'Safe Zones', value:12, icon:'🛡️', color:'emerald', action:'View Locations', tab:'shelters' },
+        ].map((c, i) => (
+          <div key={i} className="bg-white rounded-xl p-4 border border-slate-100 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+            <div className="flex items-center justify-between">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg
+                ${c.color==='red'?'bg-red-50':c.color==='amber'?'bg-amber-50':c.color==='blue'?'bg-blue-50':'bg-emerald-50'}`}>
+                {c.icon}
+              </div>
+              <span className="text-2xl font-extrabold text-slate-900">{c.value}</span>
+            </div>
+            <div className="mt-3">
+              <h5 className="text-xs font-semibold text-slate-600">{c.label}</h5>
+              <button onClick={() => onNavigate(c.tab)} className={`text-[11px] font-bold mt-1 flex items-center gap-1
+                ${c.color==='red'?'text-red-600':c.color==='amber'?'text-amber-600':c.color==='blue'?'text-blue-600':'text-emerald-600'}`}>
+                {c.action} →
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Map + Alerts + Forecast Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Map Widget */}
+        <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex flex-col" style={{height:'420px'}}>
+          <div className="p-3.5 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+              <span className="px-3 py-1 bg-white text-blue-600 text-xs font-semibold rounded shadow-sm">Map View</span>
+              <button onClick={() => onNavigate('map')} className="px-3 py-1 text-slate-500 text-xs font-medium rounded hover:bg-slate-50">Full Map →</button>
+            </div>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-red-50 text-red-600 border border-red-100">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span> Live Sensor Feed
+            </span>
+          </div>
+          <div className="relative flex-1 map-canvas-bg overflow-hidden">
+            <div className="river-path"></div>
+            <div className="absolute text-[11px] font-bold tracking-widest text-blue-900/60 rotate-45 select-none" style={{top:'45%',right:'22%'}}>RIVER GANGA</div>
+            <div className="heatmap-severe absolute w-64 h-64 rounded-full" style={{top:'6rem',left:'12rem'}}></div>
+            <svg className="absolute inset-0 w-full h-full pointer-events-none">
+              <path d="M 120 220 Q 200 190 280 230 T 420 180" fill="none" stroke="#2563eb" strokeDasharray="6,4" strokeLinecap="round" strokeWidth="4"/>
+              <circle cx="120" cy="220" fill="#2563eb" r="5"/>
+              <circle cx="420" cy="180" fill="#dc2626" r="5"/>
+            </svg>
+            {[
+              { label:'Riverside', top:80, left:112, bg:'bg-blue-600', type:'loc' },
+              { label:'Green Park', top:64, right:144, bg:'bg-emerald-600', type:'safe' },
+              { label:'Sunset Colony', bottom:112, left:160, bg:'bg-blue-600', type:'dot' },
+              { label:'Kailash Nagar', bottom:48, right:192, bg:'bg-blue-600', type:'dot' },
+            ].map((m, i) => (
+              <div key={i} onClick={() => onNotify(`Selected: ${m.label}`)}
+                className="absolute flex flex-col items-center cursor-pointer group"
+                style={{ top: m.top, left: m.left, right: m.right, bottom: m.bottom }}>
+                <span className="bg-white/90 text-[10px] font-semibold text-slate-700 px-2 py-0.5 rounded shadow-sm mb-1 group-hover:bg-blue-50 transition-colors">{m.label}</span>
+                <div className={`${m.type==='dot'?'w-6 h-6':'w-7 h-7'} rounded-full ${m.bg} text-white flex items-center justify-center shadow-lg border-2 border-white group-hover:scale-110 transition-transform`}>
+                  {m.type==='safe'?'🛡️':m.type==='dot'?<div className="w-2 h-2 rounded-full bg-white"/>:'📍'}
+                </div>
+              </div>
+            ))}
+            {/* High Hazard */}
+            <div onClick={() => onNotify('⚠️ HIGH HAZARD — Immediate Risk Zone')} className="absolute flex flex-col items-center cursor-pointer" style={{top:176,left:288}}>
+              <div className="w-9 h-9 rounded-full bg-red-600 text-white flex items-center justify-center shadow-xl border-2 border-white pulse-ring text-base">⚠️</div>
+            </div>
+            {/* Legend */}
+            <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 shadow-md w-40 z-10">
+              <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block mb-1.5">Flood Risk Level</span>
+              {[['bg-emerald-500','Low'],['bg-amber-400','Moderate'],['bg-orange-500','High'],['bg-red-600','Severe']].map(([bg,label]) => (
+                <div key={label} className="flex items-center gap-2 text-[11px] text-slate-600 mb-1">
+                  <span className={`w-2.5 h-2.5 rounded-full ${bg}`}></span>{label}
+                </div>
+              ))}
+            </div>
+            {/* Zoom Controls */}
+            <div className="absolute right-4 bottom-4 flex flex-col bg-white rounded-lg shadow-lg border border-slate-200 overflow-hidden divide-y divide-slate-100 z-10">
+              {['+','−','📍'].map((c, i) => (
+                <button key={i} onClick={() => onNotify(c === '📍' ? 'Location reset' : `Zoom ${c}`)}
+                  className="w-8 h-8 flex items-center justify-center text-slate-600 hover:bg-slate-50 text-sm font-bold">{c}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Alerts + Forecast */}
+        <div className="lg:col-span-4 flex flex-col gap-5">
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 flex-1">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-2">
+              <h3 className="font-bold text-sm text-slate-800">Recent Alerts</h3>
+              <button onClick={() => onNavigate('alerts')} className="text-xs text-blue-600 font-semibold hover:text-blue-700">View all →</button>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {ALERTS.slice(0,4).map(a => (
+                <div key={a.id} onClick={() => onNavigate('alerts')} className="py-2.5 flex items-start gap-3 cursor-pointer hover:bg-slate-50 rounded-lg px-1 transition-colors">
+                  <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs shrink-0 mt-0.5
+                    ${a.severity==='red'?'bg-red-100':a.severity==='amber'?'bg-amber-100':a.severity==='blue'?'bg-blue-100':'bg-cyan-100'}`}>
+                    {a.severity==='red'?'🚨':a.severity==='amber'?'⚠️':a.severity==='blue'?'🌧️':'📈'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-slate-800 truncate">{a.title}</p>
+                    <p className="text-[11px] text-slate-500">{a.location} • {a.time}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-sm text-slate-800">7-Day Forecast</h3>
+              <button onClick={() => onNavigate('forecast')} className="text-xs text-blue-600 font-semibold hover:text-blue-700">Details →</button>
+            </div>
+            <div className="grid grid-cols-7 gap-1 text-center">
+              {FORECAST.map((f, i) => (
+                <div key={i} onClick={() => onNavigate('forecast')} className="flex flex-col items-center p-1 rounded-lg hover:bg-slate-50 cursor-pointer">
+                  <span className="text-[11px] text-slate-400 font-medium">{f.day}</span>
+                  <span className="text-base my-1">{f.emoji}</span>
+                  <span className="text-xs font-bold text-slate-700">{f.high}°</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom Panels */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        {/* Shelters */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">🏫</span>
+              <div><h4 className="text-sm font-bold text-slate-800">Nearest Shelters</h4><p className="text-[11px] text-slate-400">Evacuation centers</p></div>
+            </div>
+            <button onClick={() => onNavigate('shelters')} className="text-xs text-blue-600 font-semibold">View All</button>
+          </div>
+          <div className="space-y-3">
+            {SHELTERS.slice(0,2).map(s => (
+              <div key={s.id} className="bg-slate-50 p-3 rounded-xl flex items-center justify-between">
+                <div>
+                  <h5 className="text-xs font-bold text-slate-800">{s.name}</h5>
+                  <p className="text-[11px] text-slate-500">{s.distance} • Capacity: {s.capacity}</p>
+                  <Badge color="emerald">{s.status}</Badge>
+                </div>
+                <button onClick={() => onNavigate('route')} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors">Route</button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Route Planner */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">🧭</span>
+              <div><h4 className="text-sm font-bold text-slate-800">Best Route Guidance</h4><p className="text-[11px] text-slate-400">Avoid flooded paths</p></div>
+            </div>
+            <Badge color="emerald">Live</Badge>
+          </div>
+          <div className="space-y-2 text-xs">
+            <div className="flex items-center gap-2 text-slate-600"><span className="w-2 h-2 rounded-full bg-blue-600"></span><span>From: <strong>Sector 4, Model Town</strong></span></div>
+            <div className="flex items-center gap-2 text-slate-600"><span className="w-2 h-2 rounded-full bg-emerald-500"></span><span>To: <strong>Govt High School (1.2 km)</strong></span></div>
+            <div className="p-2.5 bg-blue-50/80 border border-blue-100 rounded-xl flex items-center justify-between mt-2">
+              <div><div className="font-bold text-blue-900">Recommended: High Ground Route</div><div className="text-[11px] text-blue-600 mt-0.5">Avoids Riverside flood zone</div></div>
+              <span className="font-bold text-blue-800 text-sm">6 min</span>
+            </div>
+            <button onClick={() => onNavigate('route')} className="w-full mt-2 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-xs transition-colors">Start Safe Navigation</button>
+          </div>
+        </div>
+
+        {/* Emergency Contacts */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center">📞</span>
+              <div><h4 className="text-sm font-bold text-slate-800">Emergency Assistance</h4><p className="text-[11px] text-slate-400">Disaster response</p></div>
+            </div>
+            <span className="text-[11px] font-bold text-red-600">24/7</span>
+          </div>
+          <div className="space-y-2.5">
+            {EMERGENCY_CONTACTS.slice(0,3).map(e => (
+              <div key={e.id} className="flex items-center justify-between p-2 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">{e.emoji}</span>
+                  <div><div className="text-xs font-bold text-slate-800">{e.title}</div><div className="text-[10px] text-slate-500">{e.desc}</div></div>
+                </div>
+                <a href={`tel:${e.phone}`} onClick={() => onNotify(`📞 Calling ${e.title}...`)} className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs rounded-lg transition-colors">Call {e.phone}</a>
+              </div>
+            ))}
+            <button onClick={() => onNavigate('emergency')} className="w-full text-xs text-blue-600 font-semibold pt-1 hover:underline">View all emergency contacts →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MapPage({ onNotify }) {
+  const [mode, setMode] = useState('map');
+  const [activeLayer, setActiveLayer] = useState('flood');
+  return (
+    <div className="space-y-4 fade-in pb-8">
+      <div>
+        <h2 className="text-xl font-bold text-slate-900">Map View</h2>
+        <p className="text-xs text-slate-500 mt-0.5">Live flood mapping — Ludhiana, Punjab</p>
+      </div>
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden" style={{height:'calc(100vh - 220px)', minHeight:'480px'}}>
+        <div className="p-3.5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+            {['map','satellite','terrain'].map(m => (
+              <button key={m} onClick={() => setMode(m)} className={`px-3 py-1 text-xs font-medium rounded capitalize transition-all ${mode===m?'bg-white text-blue-600 shadow-sm font-semibold':'text-slate-500 hover:text-slate-700'}`}>{m}</button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {['flood','rescue','shelters','roads'].map(l => (
+              <button key={l} onClick={() => { setActiveLayer(l); onNotify(`Layer: ${l}`); }}
+                className={`px-3 py-1 text-[11px] rounded-full border font-medium capitalize transition-all ${activeLayer===l?'bg-blue-600 text-white border-blue-600':'bg-white text-slate-600 border-slate-200 hover:border-blue-300'}`}>{l}</button>
+            ))}
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-red-50 text-red-600 border border-red-100">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>Live Feed
+            </span>
+          </div>
+        </div>
+        <div className={`relative map-canvas-bg overflow-hidden ${mode==='satellite'?'brightness-75 contrast-125':''}`} style={{height:'calc(100% - 58px)'}}>
+          <div className="river-path"></div>
+          <div className="absolute text-[11px] font-bold tracking-widest text-blue-900/60 rotate-45 select-none" style={{top:'40%',right:'20%'}}>RIVER GANGA</div>
+          <div className="heatmap-severe absolute w-80 h-80 rounded-full" style={{top:'100px',left:'200px'}}></div>
+          <svg className="absolute inset-0 w-full h-full pointer-events-none">
+            <path d="M 80 300 Q 160 260 260 280 T 480 220" fill="none" stroke="#2563eb" strokeDasharray="8,5" strokeLinecap="round" strokeWidth="4"/>
+            <circle cx="80" cy="300" fill="#2563eb" r="7"/><circle cx="80" cy="300" fill="#2563eb" fillOpacity="0.3" r="14"/>
+            <circle cx="480" cy="220" fill="#10b981" r="7"/><circle cx="480" cy="220" fill="#10b981" fillOpacity="0.3" r="14"/>
+          </svg>
+          {SHELTERS.map((s,i) => (
+            <div key={s.id} onClick={() => onNotify(`Shelter: ${s.name}`)} className="absolute flex flex-col items-center cursor-pointer group"
+              style={{top: 80+i*55, left: 60+i*85}}>
+              <span className="bg-white/90 text-[10px] font-semibold px-2 py-0.5 rounded shadow mb-1 group-hover:bg-blue-50">{s.name.split(' ').slice(0,2).join(' ')}</span>
+              <div className={`w-8 h-8 rounded-full text-white flex items-center justify-center shadow-lg border-2 border-white text-sm group-hover:scale-110 transition-transform
+                ${s.status==='Open'?'bg-emerald-600':s.status==='Near Full'?'bg-amber-500':'bg-slate-400'}`}>🏫</div>
+            </div>
+          ))}
+          <div className="absolute bottom-5 left-5 bg-white/95 p-3 rounded-xl border border-slate-200 shadow-md w-44 z-10">
+            <span className="text-[10px] font-bold text-slate-700 uppercase block mb-2">Flood Risk Level</span>
+            {[['bg-emerald-500','Low'],['bg-amber-400','Moderate'],['bg-orange-500','High'],['bg-red-600','Severe']].map(([bg,l]) => (
+              <div key={l} className="flex items-center gap-2 mb-1 text-[11px] text-slate-600"><span className={`w-2.5 h-2.5 rounded-full ${bg}`}></span>{l}</div>
+            ))}
+          </div>
+          <div className="absolute right-4 bottom-4 flex flex-col bg-white rounded-lg shadow-lg border border-slate-200 overflow-hidden divide-y divide-slate-100 z-10">
+            {['+','−','⊙'].map((c,i) => (
+              <button key={i} onClick={() => onNotify(c==='⊙'?'Location reset':'Zoom '+c)} className="w-9 h-9 flex items-center justify-center text-slate-600 hover:bg-slate-50 text-sm font-bold">{c}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AlertsPage({ onNotify }) {
+  const [selected, setSelected] = useState(null);
+  return (
+    <div className="space-y-4 fade-in pb-8">
+      <div className="flex items-center justify-between">
+        <div><h2 className="text-xl font-bold text-slate-900">Alerts</h2><p className="text-xs text-slate-500 mt-0.5">{ALERTS.length} active flood alerts for your area</p></div>
+        <div className="flex gap-2">
+          {['All','Severe','Warning','Advisory'].map(f => (
+            <button key={f} className="px-3 py-1 text-xs font-medium rounded-full border border-slate-200 text-slate-600 hover:border-blue-400 hover:text-blue-600 transition-colors">{f}</button>
+          ))}
+        </div>
+      </div>
+      <div className="grid gap-3">
+        {ALERTS.map(a => (
+          <div key={a.id} onClick={() => setSelected(selected===a.id?null:a.id)}
+            className={`bg-white rounded-2xl border shadow-sm overflow-hidden cursor-pointer transition-all ${selected===a.id?'border-blue-300 shadow-md':'border-slate-200/80 hover:border-slate-300'}`}>
+            <div className="p-4 flex items-start gap-3">
+              <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0
+                ${a.severity==='red'?'bg-red-100':a.severity==='amber'?'bg-amber-100':a.severity==='blue'?'bg-blue-100':'bg-cyan-100'}`}>
+                {a.severity==='red'?'🚨':a.severity==='amber'?'⚠️':a.severity==='blue'?'🌧️':'📈'}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="text-sm font-bold text-slate-800">{a.title}</h3>
+                  <Badge color={a.severity==='red'?'red':a.severity==='amber'?'amber':a.severity==='blue'?'blue':'cyan'}>
+                    {a.severity==='red'?'Severe':a.severity==='amber'?'Warning':'Advisory'}
+                  </Badge>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">{a.location} • {a.time}</p>
+                {selected===a.id && (
+                  <div className="mt-3 pt-3 border-t border-slate-100">
+                    <p className="text-xs text-slate-600 leading-relaxed">{a.desc}</p>
+                    <div className="flex gap-2 mt-3">
+                      <button onClick={(e) => { e.stopPropagation(); onNotify('📋 Alert shared to authorities'); }} className="px-3 py-1.5 text-xs font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">Share Alert</button>
+                      <button onClick={(e) => { e.stopPropagation(); onNotify('✅ Alert acknowledged'); }} className="px-3 py-1.5 text-xs font-semibold border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors">Acknowledge</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SheltersPage({ onNotify }) {
+  return (
+    <div className="space-y-4 fade-in pb-8">
+      <div><h2 className="text-xl font-bold text-slate-900">Shelters Nearby</h2><p className="text-xs text-slate-500 mt-0.5">Available evacuation centers sorted by distance</p></div>
+      <div className="grid gap-4">
+        {SHELTERS.map(s => {
+          const pct = Math.round((s.occupied/s.capacity)*100);
+          return (
+            <div key={s.id} className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 hover:shadow-md transition-shadow">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0
+                    ${s.status==='Open'?'bg-emerald-50':s.status==='Near Full'?'bg-amber-50':'bg-slate-50'}`}>🏫</div>
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-sm">{s.name}</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">{s.distance} away • Capacity: {s.capacity} people</p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <Badge color={s.status==='Open'?'emerald':s.status==='Near Full'?'amber':'blue'}>{s.status}</Badge>
+                      <span className="text-[11px] text-slate-500">{s.occupied}/{s.capacity} occupied</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2 shrink-0">
+                  <button onClick={() => onNotify(`📍 Getting route to ${s.name}...`)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors">Get Route</button>
+                  <button onClick={() => onNotify(`📞 Calling ${s.name}...`)} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold rounded-lg transition-colors">Call</button>
+                </div>
+              </div>
+              <div className="mt-3">
+                <div className="flex justify-between text-[11px] text-slate-500 mb-1">
+                  <span>Occupancy</span><span>{pct}%</span>
+                </div>
+                <div className="w-full bg-slate-100 rounded-full h-1.5">
+                  <div className={`h-1.5 rounded-full transition-all ${pct>85?'bg-red-500':pct>60?'bg-amber-400':'bg-emerald-500'}`} style={{width:`${pct}%`}}></div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function RoutePage({ onNotify }) {
+  const [active, setActive] = useState(false);
+  return (
+    <div className="space-y-4 fade-in pb-8">
+      <div><h2 className="text-xl font-bold text-slate-900">Best Route Guidance</h2><p className="text-xs text-slate-500 mt-0.5">Real-time safe evacuation routing — avoids flooded roads</p></div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden" style={{height:'400px'}}>
+          <div className="p-3 border-b border-slate-100 flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-700">Route Preview</span>
+            <Badge color="emerald">Live Navigation</Badge>
+          </div>
+          <div className="relative map-canvas-bg overflow-hidden" style={{height:'calc(100% - 45px)'}}>
+            <div className="river-path"></div>
+            <svg className="absolute inset-0 w-full h-full pointer-events-none">
+              <path d="M 60 280 L 100 240 L 160 220 L 220 180 L 290 140 L 360 100" fill="none" stroke="#2563eb" strokeDasharray="10,6" strokeLinecap="round" strokeWidth="5"/>
+              <path d="M 60 280 L 100 300 L 180 310 L 280 290" fill="none" stroke="#ef4444" strokeDasharray="8,5" strokeLinecap="round" strokeWidth="3" strokeOpacity="0.5"/>
+              <circle cx="60" cy="280" fill="#2563eb" r="8"/><circle cx="60" cy="280" fill="#2563eb" fillOpacity="0.25" r="16"/>
+              <circle cx="360" cy="100" fill="#10b981" r="8"/><circle cx="360" cy="100" fill="#10b981" fillOpacity="0.25" r="16"/>
+            </svg>
+            <div className="heatmap-severe absolute w-48 h-48 rounded-full" style={{top:'160px',left:'200px',opacity:0.6}}></div>
+            <div className="absolute top-4 left-4 bg-white/95 p-3 rounded-xl border border-slate-200 shadow text-xs z-10">
+              <div className="flex items-center gap-2 mb-1.5"><span className="w-3 h-0.5 bg-blue-600 block" style={{borderStyle:'dashed',borderTop:'3px dashed #2563eb',height:0,width:24}}></span><span className="text-slate-700 font-medium">Safe Route (Recommended)</span></div>
+              <div className="flex items-center gap-2"><span className="w-3 h-0.5 bg-red-400 block" style={{borderStyle:'dashed',borderTop:'3px dashed #f87171',height:0,width:24}}></span><span className="text-slate-500">Flooded Route (Avoid)</span></div>
+            </div>
+          </div>
+        </div>
+        <div className="space-y-3">
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
+            <h3 className="font-bold text-sm text-slate-800 mb-3">Waypoints</h3>
+            <div className="space-y-3">
+              <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-xl">
+                <div className="w-7 h-7 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">A</div>
+                <div><p className="text-xs font-semibold text-slate-800">Current Location</p><p className="text-[11px] text-slate-500">Sector 4, Model Town, Ludhiana</p></div>
+              </div>
+              <div className="w-px h-4 bg-slate-200 ml-6"></div>
+              <div className="flex items-start gap-3 p-3 bg-emerald-50 rounded-xl">
+                <div className="w-7 h-7 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">B</div>
+                <div><p className="text-xs font-semibold text-slate-800">Government High School</p><p className="text-[11px] text-slate-500">1.2 km • Shelter — 200 capacity</p></div>
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
+            <h3 className="font-bold text-sm text-slate-800 mb-2">Route Details</h3>
+            <div className="grid grid-cols-2 gap-2 text-center mb-3">
+              {[['6 min','ETA'],['1.2 km','Distance'],['High Ground','Route Type'],['3 roads','Avoid Count']].map(([v,l]) => (
+                <div key={l} className="bg-slate-50 rounded-xl p-2">
+                  <div className="font-bold text-blue-700 text-sm">{v}</div>
+                  <div className="text-[10px] text-slate-500">{l}</div>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => { setActive(!active); onNotify(active?'Navigation stopped':'🧭 Safe Navigation Started — Turn-by-turn active!'); }}
+              className={`w-full py-2.5 text-white rounded-lg font-semibold text-sm transition-all ${active?'bg-emerald-600 hover:bg-emerald-700':'bg-blue-600 hover:bg-blue-700'}`}>
+              {active ? '🧭 Navigation Active — Stop' : 'Start Safe Navigation'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ForecastPage({ onNotify }) {
+  return (
+    <div className="space-y-4 fade-in pb-8">
+      <div><h2 className="text-xl font-bold text-slate-900">7-Day Weather Forecast</h2><p className="text-xs text-slate-500 mt-0.5">Flood risk forecast for Ludhiana, Punjab</p></div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {FORECAST.map((f, i) => (
+          <div key={i} onClick={() => onNotify(`${f.day}: ${f.desc}, ${f.high}°C high`)} className={`bg-white rounded-2xl border shadow-sm p-5 cursor-pointer hover:shadow-md transition-all hover:-translate-y-0.5 ${i===0?'border-blue-300 ring-2 ring-blue-100':i===1?'border-red-200':'border-slate-200/80'}`}>
+            <div className="flex items-start justify-between mb-3">
+              <div><p className="font-bold text-slate-800">{f.day}</p><p className="text-[11px] text-slate-400">{f.date}</p></div>
+              <span className="text-3xl">{f.emoji}</span>
+            </div>
+            <p className="text-sm font-semibold text-slate-700 mb-2">{f.desc}</p>
+            <div className="space-y-1.5 text-xs text-slate-500">
+              <div className="flex justify-between"><span>🌡️ High / Low</span><span className="font-bold text-slate-700">{f.high}° / {f.low}°C</span></div>
+              <div className="flex justify-between"><span>🌧️ Rain Chance</span><span className={`font-bold ${parseInt(f.rain)>70?'text-red-600':parseInt(f.rain)>40?'text-amber-600':'text-emerald-600'}`}>{f.rain}</span></div>
+              <div className="flex justify-between"><span>💨 Wind Speed</span><span className="font-bold text-slate-700">{f.wind}</span></div>
+            </div>
+            {i <= 1 && <div className="mt-3 pt-2 border-t border-slate-100"><Badge color={i===0?'amber':'red'}>Flood Risk: {i===0?'High':'Severe'}</Badge></div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RiskZonesPage({ onNotify }) {
+  return (
+    <div className="space-y-4 fade-in pb-8">
+      <div><h2 className="text-xl font-bold text-slate-900">Risk Zones</h2><p className="text-xs text-slate-500 mt-0.5">Current flood risk classification for all zones</p></div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {RISK_ZONES.map(z => (
+          <div key={z.id} className={`bg-white rounded-2xl border shadow-sm p-5 hover:shadow-md transition-shadow border-l-4 ${z.risk==='Severe'?'border-l-red-500':z.risk==='High'?'border-l-orange-500':z.risk==='Moderate'?'border-l-amber-400':'border-l-emerald-500'}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-slate-800 text-sm">{z.zone}</h3>
+                <p className="text-xs text-slate-500 mt-1">{z.desc}</p>
+                {z.affected > 0 && <p className="text-xs text-red-600 font-semibold mt-1">👥 ~{z.affected.toLocaleString()} people affected</p>}
+              </div>
+              <Badge color={z.risk==='Severe'?'red':z.risk==='High'?'orange':z.risk==='Moderate'?'amber':'emerald'}>{z.risk}</Badge>
+            </div>
+            {(z.risk==='Severe'||z.risk==='High') && (
+              <button onClick={() => onNotify(`🚨 Evacuation initiated for ${z.zone}`)} className="mt-3 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition-colors">Order Evacuation</button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EmergencyPage({ onNotify }) {
+  return (
+    <div className="space-y-4 fade-in pb-8">
+      <div><h2 className="text-xl font-bold text-slate-900">Emergency Info</h2><p className="text-xs text-slate-500 mt-0.5">All 24/7 disaster response channels — tap to call</p></div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {EMERGENCY_CONTACTS.map(e => (
+          <div key={e.id} className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 hover:shadow-md transition-shadow">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">{e.emoji}</span>
+                <div><h3 className="font-bold text-slate-800 text-sm">{e.title}</h3><p className="text-xs text-slate-500 mt-0.5">{e.desc}</p></div>
+              </div>
+              <a href={`tel:${e.phone}`} onClick={() => onNotify(`📞 Calling ${e.title}...`)}
+                className={`px-4 py-2 text-white text-xs font-bold rounded-xl shadow-sm transition-colors
+                  ${e.color==='red'?'bg-red-600 hover:bg-red-700':e.color==='emerald'?'bg-emerald-600 hover:bg-emerald-700':e.color==='orange'?'bg-orange-500 hover:bg-orange-600':e.color==='purple'?'bg-purple-600 hover:bg-purple-700':e.color==='pink'?'bg-pink-600 hover:bg-pink-700':'bg-blue-600 hover:bg-blue-700'}`}>
+                Call {e.phone}
+              </a>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="bg-red-50 rounded-2xl border border-red-200 p-5">
+        <h3 className="font-bold text-red-800 mb-2">⚠️ In a Life-Threatening Emergency</h3>
+        <p className="text-sm text-red-700 mb-3">If you or someone around you is in immediate danger due to flooding, call <strong>112</strong> immediately. Do not delay.</p>
+        <a href="tel:112" onClick={() => onNotify('🚨 Calling Emergency Line 112!')} className="inline-block px-6 py-3 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl shadow-md transition-colors">📞 Call 112 Now</a>
+      </div>
+    </div>
+  );
+}
+
+function SettingsPage({ onNotify }) {
+  const [notif, setNotif] = useState(true);
+  const [sound, setSound] = useState(true);
+  const [loc, setLoc] = useState(true);
+  const Toggle = ({ val, set, label, desc }) => (
+    <div className="flex items-center justify-between py-3.5 border-b border-slate-100 last:border-0">
+      <div><p className="text-sm font-semibold text-slate-800">{label}</p><p className="text-xs text-slate-500 mt-0.5">{desc}</p></div>
+      <button onClick={() => { set(!val); onNotify(`${label}: ${!val?'Enabled':'Disabled'}`); }} className={`w-12 h-6 rounded-full transition-colors relative ${val?'bg-blue-600':'bg-slate-200'}`}>
+        <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${val?'translate-x-6':'translate-x-0.5'}`}></span>
+      </button>
+    </div>
+  );
+  return (
+    <div className="space-y-4 fade-in pb-8 max-w-2xl">
+      <div><h2 className="text-xl font-bold text-slate-900">Settings</h2><p className="text-xs text-slate-500 mt-0.5">Manage your FloodSafe preferences</p></div>
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+        <h3 className="font-bold text-slate-800 text-sm mb-1">Account</h3>
+        <div className="flex items-center gap-4 py-3 border-b border-slate-100">
+          <div className="w-14 h-14 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-lg">AK</div>
+          <div><p className="font-bold text-slate-800">Adeel Khan</p><p className="text-xs text-slate-500">Ludhiana, Punjab — Zone B</p><Badge color="emerald">● Active User</Badge></div>
+        </div>
+        <Toggle val={notif} set={setNotif} label="Push Notifications" desc="Receive real-time flood alerts and warnings" />
+        <Toggle val={sound} set={setSound} label="Alert Sound" desc="Play alarm sound for severe flood alerts" />
+        <Toggle val={loc} set={setLoc} label="Location Tracking" desc="Track your position for nearest shelter routing" />
+      </div>
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+        <h3 className="font-bold text-slate-800 text-sm mb-3">Registered Location</h3>
+        <div className="p-3 bg-blue-50 rounded-xl flex items-center gap-3">
+          <span className="text-xl">📍</span>
+          <div><p className="text-xs font-bold text-slate-800">Ludhiana, Punjab</p><p className="text-[11px] text-slate-500">Sector 4, Model Town — Pin: 141002</p></div>
+          <button onClick={() => onNotify('Location update requested...')} className="ml-auto px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg">Change</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────── WEB DASHBOARD SHELL ───────────────────────────── */
+function WebDashboard({ onNotify }) {
+  const [tab, setTab] = useState('dashboard');
+  const [searchVal, setSearchVal] = useState('');
+  const [notifCount, setNotifCount] = useState(3);
+
+  const PAGES = {
+    dashboard: <DashboardPage onNavigate={setTab} onNotify={onNotify} />,
+    map: <MapPage onNotify={onNotify} />,
+    alerts: <AlertsPage onNotify={onNotify} />,
+    shelters: <SheltersPage onNotify={onNotify} />,
+    route: <RoutePage onNotify={onNotify} />,
+    forecast: <ForecastPage onNotify={onNotify} />,
+    'risk-zones': <RiskZonesPage onNotify={onNotify} />,
+    emergency: <EmergencyPage onNotify={onNotify} />,
+    settings: <SettingsPage onNotify={onNotify} />,
+  };
+
+  return (
+    <div className="app-layout" style={{background:'#f0f4f9'}}>
+      {/* Sidebar */}
+      <aside className="sidebar bg-[#0a192f] text-slate-300 border-r border-slate-800">
+        <div>
+          <div className="p-5 flex items-center gap-3 border-b border-slate-800/80">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/30 shrink-0">
+              <svg className="w-6 h-6 fill-current" viewBox="0 0 24 24"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+            </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-white leading-none">FloodSafe</h1>
+              <p className="text-[11px] text-blue-300 font-medium tracking-wide mt-0.5">Be Aware. Stay Safe.</p>
+            </div>
+          </div>
+          <nav className="mt-4 px-3 space-y-0.5 text-sm font-medium">
+            {SIDEBAR_ITEMS.map(item => (
+              <button key={item.id} onClick={() => setTab(item.id)}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-left transition-all ${tab===item.id?'bg-blue-600 text-white font-semibold shadow-md shadow-blue-600/30':'text-slate-400 hover:bg-slate-800/70 hover:text-white'}`}>
+                <span className="text-base w-5 text-center">{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+        <div className="p-4 m-3 rounded-xl bg-slate-800/80 border border-slate-700/60">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">🛡️</div>
+            <div>
+              <h4 className="text-sm font-semibold text-white leading-tight">You are Safe</h4>
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">Stay informed. Follow official updates and instructions.</p>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <div className="main-area">
+        {/* Top Header */}
+        <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0 z-20">
+          <div className="w-96 relative">
+            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">🔍</div>
+            <input value={searchVal} onChange={e => setSearchVal(e.target.value)}
+              onKeyDown={e => e.key==='Enter' && onNotify(`Search: "${searchVal}"`)}
+              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-full text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:bg-white"
+              placeholder="Search location (city, district, area)..." />
+          </div>
+          <div className="flex items-center gap-5">
+            <div className="text-right hidden sm:block">
+              <div className="text-xs font-semibold text-slate-700">Mon, 14 Jul 2025</div>
+              <div className="text-[11px] text-slate-400">10:24 AM</div>
+            </div>
+            <div className="flex items-center gap-2 pl-4 border-l border-slate-200">
+              <div className="w-8 h-8 rounded-full bg-amber-50 flex items-center justify-center text-lg">☀️</div>
+              <div><div className="text-xs font-bold text-slate-800">28°C</div><div className="text-[10px] text-slate-400">Partly Cloudy</div></div>
+            </div>
+            <button onClick={() => { onNotify(`You have ${notifCount} unread alerts`); setNotifCount(0); }} className="p-2 rounded-full hover:bg-slate-100 text-slate-600 relative transition-colors">
+              🔔
+              {notifCount > 0 && <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center border-2 border-white">{notifCount}</span>}
+            </button>
+            <div className="flex items-center gap-3 pl-2 cursor-pointer">
+              <div className="relative">
+                <div className="w-9 h-9 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-xs ring-2 ring-blue-500/20">AK</div>
+                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white"></span>
+              </div>
+              <div className="hidden md:block">
+                <div className="text-xs font-semibold text-slate-800">Adeel Khan</div>
+                <span className="text-[10px] text-emerald-600 font-medium">● Online</span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Page Content with Scrolling */}
+        <div className="page-content" key={tab}>
+          {PAGES[tab] || PAGES.dashboard}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────── MOBILE APP ────────────────────── */
+function MobileApp({ onNotify }) {
+  const [tab, setTab] = useState('home');
+  const [alertSel, setAlertSel] = useState(null);
+
+  const NAV_TABS = [
+    { id:'home', label:'Home', icon:'🏠' },
+    { id:'map', label:'Map', icon:'🗺️' },
+    { id:'shelters', label:'Shelters', icon:'🏫' },
+    { id:'alerts', label:'Alerts', icon:'🚨' },
+    { id:'more', label:'More', icon:'⋯' },
+  ];
+
+  return (
+    <div className="flex items-center justify-center p-0 sm:p-4 select-none w-full h-full mobile-shell">
+      <div className="w-full max-w-[412px] h-[100dvh] sm:h-[860px] bg-slate-50 sm:rounded-[44px] shadow-2xl overflow-hidden flex flex-col relative border-0 sm:border-[8px] sm:border-slate-800">
+        {/* Status Bar */}
+        <div className="w-full px-7 pt-3.5 pb-2 flex justify-between items-center bg-white z-20 shrink-0 text-slate-800">
+          <span className="font-bold text-sm tracking-tight">9:41</span>
+          <div className="flex items-center gap-2 text-xs">
+            <span>📶</span><span>📡</span>
+            <div className="w-6 h-3 border-2 border-slate-700 rounded-sm p-0.5 flex items-center"><div className="w-full h-full bg-slate-800 rounded-sm"></div></div>
+          </div>
+        </div>
+
+        {/* Brand Bar */}
+        <header className="bg-white px-5 py-2.5 flex justify-between items-center border-b border-slate-100 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 to-sky-400 flex items-center justify-center text-white font-bold shadow-md shadow-blue-500/20">💧</div>
+            <span className="text-xl font-extrabold tracking-tight text-slate-800">FloodSafe</span>
+          </div>
+          <button onClick={() => onNotify('🔔 3 unread alerts')} className="w-9 h-9 rounded-full bg-slate-50 border border-slate-200/80 flex items-center justify-center relative">
+            🔔<span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white"></span>
+          </button>
+        </header>
+
+        {/* Scrollable Content */}
+        <main className="flex-1 overflow-y-auto mobile-scroll" style={{paddingBottom:'80px'}}>
+          {tab === 'home' && (
+            <div className="px-5 py-4 space-y-4">
+              <div>
+                <h1 className="text-xl font-bold text-slate-900">Good Morning, Adeel 👋</h1>
+                <p className="text-xs text-slate-500 mt-0.5">Latest flood info for your area.</p>
+                <div onClick={() => onNotify('Location: Ludhiana, Punjab')} className="mt-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-2xl p-3.5 flex items-center justify-between cursor-pointer shadow-md shadow-blue-500/25">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">📍</div>
+                    <div><p className="text-[10px] text-blue-200 font-semibold uppercase tracking-wide">Your Location</p><p className="text-sm font-bold">Ludhiana, Punjab</p></div>
+                  </div>
+                  <span className="text-blue-200 text-lg">›</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label:'Alerts', val:'3 Active', color:'text-red-600', border:'hover:border-red-200', tab:'alerts', emoji:'🚨' },
+                  { label:'Shelters', val:'2 Nearby', color:'text-emerald-600', border:'hover:border-emerald-200', tab:'shelters', emoji:'🏫' },
+                  { label:'Forecast', val:'Rain Likely', color:'text-slate-800', border:'hover:border-blue-200', tab:'more', emoji:'🌧️' },
+                  { label:'Safe Zones', val:'12 Locations', color:'text-emerald-600', border:'hover:border-emerald-200', tab:'map', emoji:'🛡️' },
+                ].map((c,i) => (
+                  <div key={i} onClick={() => setTab(c.tab)} className={`bg-white rounded-2xl p-3.5 border border-slate-100 shadow-sm flex items-center gap-3 cursor-pointer active:scale-95 transition-all ${c.border}`}>
+                    <span className="text-2xl">{c.emoji}</span>
+                    <div className="min-w-0"><span className="block text-xs font-semibold text-slate-700">{c.label}</span><span className={`block text-sm font-extrabold ${c.color}`}>{c.val}</span></div>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-2.5">
+                  <h2 className="text-sm font-bold text-slate-800">Recent Alerts</h2>
+                  <button onClick={() => setTab('alerts')} className="text-xs font-semibold text-blue-600">View all →</button>
+                </div>
+                <div className="space-y-2.5">
+                  {ALERTS.slice(0,2).map(a => (
+                    <div key={a.id} onClick={() => setTab('alerts')} className="bg-white rounded-2xl p-3.5 border border-slate-100 shadow-sm flex items-center justify-between cursor-pointer active:bg-slate-50">
+                      <div className="flex items-center gap-3">
+                        <span className={`w-9 h-9 rounded-xl flex items-center justify-center ${a.severity==='red'?'bg-red-50':'bg-amber-50'}`}>{a.severity==='red'?'🚨':'⚠️'}</span>
+                        <div><h3 className="text-xs font-bold text-slate-800">{a.title}</h3><p className="text-[11px] text-slate-500">{a.location} • {a.time}</p></div>
+                      </div>
+                      <span className="text-slate-400 text-sm">›</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-slate-800 mb-2">Flood Risk &amp; Route</h2>
+                <div className="relative w-full h-36 rounded-2xl overflow-hidden border border-slate-200 shadow-sm">
+                  <svg className="w-full h-full" viewBox="0 0 400 160" preserveAspectRatio="none">
+                    <rect fill="#f1f5f9" width="400" height="160"/>
+                    <path d="M0,120 C100,100 180,135 250,115 C320,95 360,110 400,100 L400,160 L0,160 Z" fill="#bae6fd" opacity="0.8"/>
+                    <circle cx="280" cy="70" fill="#ef4444" opacity="0.15" r="50"/>
+                    <circle cx="280" cy="70" fill="#f97316" opacity="0.25" r="30"/>
+                    <circle cx="280" cy="70" fill="#ef4444" opacity="0.5" r="15"/>
+                    <path d="M60,110 L110,80 L160,70 L210,35 L260,30" fill="none" stroke="#2563eb" strokeDasharray="6,4" strokeLinecap="round" strokeWidth="4"/>
+                    <circle cx="60" cy="110" fill="#2563eb" r="6"/><circle cx="60" cy="110" fill="#2563eb" opacity="0.3" r="10"/>
+                    <circle cx="260" cy="30" fill="#10b981" r="6"/><circle cx="260" cy="30" fill="#10b981" opacity="0.3" r="10"/>
+                  </svg>
+                  <div className="absolute top-2.5 left-2.5 bg-white/90 rounded-lg px-2 py-1 shadow border border-slate-200 text-[10px] font-bold text-slate-700 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span>Govt High School (1.2 km)
+                  </div>
+                  <button onClick={() => setTab('map')} className="absolute bottom-2.5 right-2.5 bg-blue-600 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 flex items-center gap-1">Explore Map →</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === 'map' && (
+            <div className="px-5 py-4 space-y-3">
+              <h2 className="text-sm font-bold text-slate-800">Flood Risk Map</h2>
+              <div className="relative w-full rounded-2xl overflow-hidden border border-slate-200 shadow-sm map-canvas-bg" style={{height:'280px'}}>
+                <div className="river-path"></div>
+                <div className="heatmap-severe absolute w-40 h-40 rounded-full" style={{top:'60px',left:'160px'}}></div>
+                <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                  <path d="M 50 220 L 120 180 L 200 140 L 280 90" fill="none" stroke="#2563eb" strokeDasharray="6,4" strokeLinecap="round" strokeWidth="4"/>
+                  <circle cx="50" cy="220" fill="#2563eb" r="7"/><circle cx="50" cy="220" fill="#2563eb" opacity="0.3" r="14"/>
+                  <circle cx="280" cy="90" fill="#10b981" r="7"/><circle cx="280" cy="90" fill="#10b981" opacity="0.3" r="14"/>
+                </svg>
+                <div className="absolute bottom-3 left-3 bg-white/90 rounded-xl p-2.5 text-xs border border-slate-200 shadow">
+                  {[['bg-emerald-500','Low'],['bg-amber-400','Moderate'],['bg-red-500','Severe']].map(([bg,l]) => (
+                    <div key={l} className="flex items-center gap-1.5 mb-0.5 text-slate-600"><span className={`w-2 h-2 rounded-full ${bg}`}></span>{l}</div>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {['Flood Layer','Shelters','Routes'].map(l => (
+                  <button key={l} onClick={() => onNotify(`Map layer: ${l}`)} className="py-2 text-[11px] font-semibold text-slate-600 border border-slate-200 rounded-xl bg-white hover:border-blue-300 hover:text-blue-600 transition-colors">{l}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {tab === 'shelters' && (
+            <div className="px-5 py-4 space-y-3">
+              <h2 className="text-sm font-bold text-slate-800">Shelters Nearby</h2>
+              {SHELTERS.map(s => (
+                <div key={s.id} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-800">{s.name}</h3>
+                      <p className="text-[11px] text-slate-500 mt-0.5">{s.distance} • Cap: {s.capacity}</p>
+                      <Badge color={s.status==='Open'?'emerald':s.status==='Near Full'?'amber':'blue'}>{s.status}</Badge>
+                    </div>
+                    <button onClick={() => onNotify(`Route to ${s.name}`)} className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg">Route</button>
+                  </div>
+                  <div className="mt-2">
+                    <div className="w-full bg-slate-100 rounded-full h-1.5">
+                      <div className={`h-1.5 rounded-full ${s.occupied/s.capacity>0.85?'bg-red-500':s.occupied/s.capacity>0.6?'bg-amber-400':'bg-emerald-500'}`} style={{width:`${(s.occupied/s.capacity)*100}%`}}></div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {tab === 'alerts' && (
+            <div className="px-5 py-4 space-y-3">
+              <h2 className="text-sm font-bold text-slate-800">All Alerts</h2>
+              {ALERTS.map(a => (
+                <div key={a.id} onClick={() => setAlertSel(alertSel===a.id?null:a.id)} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm cursor-pointer active:bg-slate-50">
+                  <div className="flex items-center gap-3">
+                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-base ${a.severity==='red'?'bg-red-50':'bg-amber-50'}`}>{a.severity==='red'?'🚨':'⚠️'}</span>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-xs font-bold text-slate-800">{a.title}</h3>
+                      <p className="text-[11px] text-slate-500">{a.location} • {a.time}</p>
+                    </div>
+                    <span className="text-slate-400">{alertSel===a.id?'↑':'›'}</span>
+                  </div>
+                  {alertSel===a.id && <p className="text-xs text-slate-600 mt-3 pt-3 border-t border-slate-100 leading-relaxed">{a.desc}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {tab === 'more' && (
+            <div className="px-5 py-4 space-y-3">
+              <h2 className="text-sm font-bold text-slate-800">More Options</h2>
+              {[
+                { emoji:'🌤️', label:'7-Day Forecast', desc:'Detailed weather & flood risk' },
+                { emoji:'⚠️', label:'Risk Zones', desc:'Flood hazard zone mapping' },
+                { emoji:'📞', label:'Emergency Contacts', desc:'24/7 disaster hotlines' },
+                { emoji:'⚙️', label:'Settings', desc:'Notifications, location, profile' },
+              ].map((item, i) => (
+                <button key={i} onClick={() => onNotify(`Opened: ${item.label}`)} className="w-full bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex items-center gap-3 text-left hover:border-blue-200 active:scale-95 transition-all">
+                  <span className="text-2xl">{item.emoji}</span>
+                  <div><p className="text-sm font-bold text-slate-800">{item.label}</p><p className="text-[11px] text-slate-500">{item.desc}</p></div>
+                  <span className="text-slate-300 ml-auto text-lg">›</span>
+                </button>
+              ))}
+              <div className="pt-2">
+                <h3 className="text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">Emergency Contacts</h3>
+                {EMERGENCY_CONTACTS.slice(0,3).map(e => (
+                  <div key={e.id} className="bg-white rounded-2xl p-3.5 border border-slate-100 shadow-sm flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2.5"><span className="text-xl">{e.emoji}</span><div><p className="text-xs font-bold text-slate-800">{e.title}</p><p className="text-[10px] text-slate-400">{e.desc}</p></div></div>
+                    <a href={`tel:${e.phone}`} onClick={() => onNotify(`Calling ${e.title}...`)} className="px-3 py-1 bg-red-50 text-red-600 font-bold text-xs rounded-lg">Call {e.phone}</a>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </main>
+
+        {/* Bottom Nav */}
+        <nav className="absolute bottom-0 left-0 right-0 bg-white border-t border-slate-200/80 flex z-30">
+          {NAV_TABS.map(n => (
+            <button key={n.id} onClick={() => setTab(n.id)} className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-0.5 transition-colors ${tab===n.id?'text-blue-600':'text-slate-400 hover:text-slate-600'}`}>
+              <span className="text-lg">{n.icon}</span>
+              <span className="text-[10px] font-semibold tracking-tight">{n.label}</span>
+              {n.id==='alerts' && <span className="absolute mt-1 ml-4 w-1.5 h-1.5 bg-red-500 rounded-full animate-ping"></span>}
+            </button>
+          ))}
+        </nav>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────── ROOT APP WITH VIEW SWITCHER ────────────────────────── */
+function App() {
+  const [mode, setMode] = useState('web');
+  const [toast, setToast] = useState(null);
+
+  const notify = useCallback((msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  return (
+    <div style={{height:'100vh',display:'flex',flexDirection:'column'}}>
+      {/* Top Switcher Bar */}
+      <header style={{background:'#030712',borderBottom:'1px solid #1e293b',padding:'8px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0,zIndex:50}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <div style={{width:32,height:32,borderRadius:10,background:'#2563eb',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>💧</div>
+          <div>
+            <div style={{color:'#fff',fontWeight:700,fontSize:13}}>FloodSafe Cross-Platform</div>
+            <div style={{color:'#60a5fa',fontSize:10}}>React TSX Browser Preview</div>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:4,background:'#1e293b',padding:4,borderRadius:12,border:'1px solid #334155'}}>
+          {[['web','💻 Web Dashboard'],['mobile','📱 Mobile App'],['dual','⚡ Dual View']].map(([m,l]) => (
+            <button key={m} onClick={() => setMode(m)} style={{padding:'6px 14px',borderRadius:8,fontSize:11,fontWeight:600,cursor:'pointer',border:'none',
+              background:mode===m?'#2563eb':'transparent',color:mode===m?'#fff':'#94a3b8',transition:'all 0.2s'}}>{l}</button>
+          ))}
+        </div>
+        <div style={{display:'flex',gap:6}}>
+          <span style={{fontSize:10,padding:'3px 10px',borderRadius:99,background:'#dcfce7',color:'#166534',fontWeight:600}}>● React 18 Running</span>
+          <span style={{fontSize:10,padding:'3px 10px',borderRadius:99,background:'#dbeafe',color:'#1e40af',fontWeight:600}}>Zero Install</span>
+        </div>
+      </header>
+
+      {/* Views */}
+      <div style={{flex:1,overflow:'hidden',position:'relative'}}>
+        {mode === 'web' && <WebDashboard onNotify={notify} />}
+        {mode === 'mobile' && (
+          <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',background:'#0f172a',overflowY:'auto'}}>
+            <MobileApp onNotify={notify} />
+          </div>
+        )}
+        {mode === 'dual' && (
+          <div style={{display:'flex',height:'100%',overflow:'hidden'}}>
+            <div style={{flex:'0 0 62%',borderRight:'2px solid #1e293b',overflow:'hidden',display:'flex',flexDirection:'column'}}>
+              <div style={{background:'#0f172a',padding:'4px 12px',fontSize:10,color:'#60a5fa',fontWeight:600,display:'flex',alignItems:'center',gap:6}}>
+                <span style={{width:6,height:6,borderRadius:'50%',background:'#3b82f6',display:'inline-block'}}></span>Web Dashboard Viewport
+              </div>
+              <div style={{flex:1,overflow:'hidden'}}><WebDashboard onNotify={notify} /></div>
+            </div>
+            <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',background:'#0f172a',overflow:'hidden'}}>
+              <div style={{width:'100%',padding:'4px 12px',fontSize:10,color:'#34d399',fontWeight:600,display:'flex',alignItems:'center',gap:6}}>
+                <span style={{width:6,height:6,borderRadius:'50%',background:'#10b981',display:'inline-block'}}></span>Android Mobile Viewport
+              </div>
+              <div style={{flex:1,width:'100%',overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                <MobileApp onNotify={notify} />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Toast Notification */}
+      {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
