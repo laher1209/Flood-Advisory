@@ -3,19 +3,29 @@ import React, { useState } from 'react';
 interface TopHeaderProps {
   onSearch?: (query: string) => void;
   onNotificationClick?: () => void;
+  onDetectLocation?: () => void;
   userName?: string;
   userInitials?: string;
+  locationName?: string;
   locationTemp?: string;
   weatherCondition?: string;
+  weatherEmoji?: string;
+  stationName?: string;
+  isDetectingLocation?: boolean;
 }
 
 export const TopHeader: React.FC<TopHeaderProps> = ({
   onSearch,
   onNotificationClick,
+  onDetectLocation,
   userName = 'Adeel Khan',
   userInitials = 'AK',
-  locationTemp = '28°C',
-  weatherCondition = 'Partly Cloudy'
+  locationName = 'Detecting Location...',
+  locationTemp = '--°C',
+  weatherCondition = 'Updating...',
+  weatherEmoji = '⛅',
+  stationName = 'IMD Network',
+  isDetectingLocation = false
 }) => {
   const [searchVal, setSearchVal] = useState('');
   const [notificationCount, setNotificationCount] = useState(1);
@@ -23,8 +33,8 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (onSearch) {
-      onSearch(searchVal);
+    if (onSearch && searchVal.trim()) {
+      onSearch(searchVal.trim());
     }
   };
 
@@ -41,44 +51,60 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
       className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between flex-shrink-0 sticky top-0 z-30"
       data-purpose="top-navigation-bar"
     >
-      {/* Search Input Container */}
-      <form onSubmit={handleSearchSubmit} className="w-96 relative">
-        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </div>
-        <input
-          value={searchVal}
-          onChange={(e) => setSearchVal(e.target.value)}
-          className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-full text-xs text-slate-700 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-          placeholder="Search location (city, district, area)..."
-          type="text"
-        />
-      </form>
-
-      {/* Right Header Actions */}
-      <div className="flex items-center gap-6">
-        {/* Date & Time Info */}
-        <div className="text-right hidden sm:block">
-          <div className="text-xs font-semibold text-slate-700">Mon, 14 Jul 2025</div>
-          <div className="text-[11px] text-slate-400">10:24 AM</div>
-        </div>
-
-        {/* Weather Widget Mini */}
-        <div className="flex items-center gap-2 pl-4 border-l border-slate-200">
-          <div className="w-8 h-8 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center">
-            <svg className="w-5 h-5 fill-amber-400" viewBox="0 0 24 24">
-              <path d="M12 7a5 5 0 100 10 5 5 0 000-10zM2 13h2a1 1 0 100-2H2a1 1 0 100 2zm18 0h2a1 1 0 100-2h-2a1 1 0 100 2zm-9-9V2a1 1 0 10-2 0v2a1 1 0 102 0zm0 18v-2a1 1 0 10-2 0v2a1 1 0 102 0zm-6.364-14.364l1.414 1.414a1 1 0 001.414-1.414L6.05 4.636a1 1 0 00-1.414 1.414zm12.728 12.728l1.414 1.414a1 1 0 001.414-1.414l-1.414-1.414a1 1 0 00-1.414 1.414zM4.636 17.95l1.414-1.414a1 1 0 00-1.414-1.414L3.222 16.536a1 1 0 001.414 1.414zm14.142-14.142a1 1 0 00-1.414 1.414l1.414 1.414a1 1 0 001.414-1.414l-1.414-1.414z" />
+      {/* Search & Location Bar */}
+      <div className="flex items-center gap-3">
+        <form onSubmit={handleSearchSubmit} className="w-80 relative">
+          <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
+          <input
+            value={searchVal}
+            onChange={(e) => setSearchVal(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-full text-xs text-slate-700 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+            placeholder="Search city (e.g. Mumbai, Delhi, Ludhiana)..."
+            type="text"
+          />
+        </form>
+
+        {/* GPS Location Auto-Detect Button */}
+        <button
+          onClick={onDetectLocation}
+          disabled={isDetectingLocation}
+          title="Detect my current location via GPS"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 transition-colors disabled:opacity-60"
+        >
+          <svg className={`w-3.5 h-3.5 ${isDetectingLocation ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path d="M12 2v2m0 16v2m10-10h-2M4 12H2m15.071-7.071l-1.414 1.414M8.343 15.657l-1.414 1.414m11.314 0l-1.414-1.414M8.343 8.343L6.929 6.929M12 16a4 4 0 100-8 4 4 0 000 8z" />
+          </svg>
+          <span className="hidden md:inline">{isDetectingLocation ? 'Locating...' : 'Auto-Detect'}</span>
+        </button>
+      </div>
+
+      {/* Right Header Actions */}
+      <div className="flex items-center gap-5">
+        {/* Weather & IMD Station Mini Widget */}
+        <div className="flex items-center gap-2.5 pl-3 border-l border-slate-200">
+          <div className="w-8 h-8 rounded-full bg-blue-50 text-base flex items-center justify-center shadow-inner">
+            {weatherEmoji}
+          </div>
           <div>
-            <div className="text-xs font-bold text-slate-800">{locationTemp}</div>
-            <div className="text-[10px] text-slate-400">{weatherCondition}</div>
+            <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <span>{locationTemp}</span>
+              <span className="text-[10px] text-slate-500 font-normal">({locationName})</span>
+            </div>
+            <div className="text-[10px] text-slate-400 flex items-center gap-1">
+              <span>{weatherCondition}</span>
+              <span>•</span>
+              <span className="text-blue-600 font-medium truncate max-w-[110px]" title={stationName}>
+                IMD: {stationName}
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* Notification Bell Icon with Badge & Dropdown */}
+        {/* Notification Bell Icon */}
         <div className="relative">
           <button
             onClick={handleBellClick}
@@ -102,7 +128,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           {showNotificationAlert && (
             <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-xl border border-slate-200 p-3 z-50 animate-in fade-in slide-in-from-top-1">
               <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-                <span className="text-xs font-bold text-slate-800">Notifications</span>
+                <span className="text-xs font-bold text-slate-800">Hydrological Alerts</span>
                 <button
                   onClick={() => {
                     setNotificationCount(0);
@@ -110,33 +136,21 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
                   }}
                   className="text-[10px] text-blue-600 hover:underline"
                 >
-                  Mark all read
+                  Mark read
                 </button>
               </div>
               <div className="mt-2 text-xs text-slate-600">
-                <p className="font-semibold text-red-600">Flash Flood Alert</p>
-                <p className="text-[11px] text-slate-500 mt-0.5">Water level rise in Riverside Sector 3. Take necessary precautions.</p>
+                <p className="font-semibold text-amber-600">Active Station Watch</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Live IMD &amp; Open-Meteo feeds active for {locationName}.</p>
               </div>
             </div>
           )}
         </div>
 
-        {/* User Profile Dropdown Component */}
-        <div className="flex items-center gap-3 pl-2 cursor-pointer hover:opacity-90 transition-opacity">
-          <div className="relative">
-            <div className="w-9 h-9 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-xs ring-2 ring-blue-500/20">
-              {userInitials}
-            </div>
-            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white"></span>
-          </div>
-          <div className="hidden md:block">
-            <div className="text-xs font-semibold text-slate-800 flex items-center gap-1">
-              {userName}
-              <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path d="M19 9l-7 7-7-7" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </div>
-            <span className="text-[10px] text-emerald-600 font-medium">● Online</span>
+        {/* User Profile Info */}
+        <div className="flex items-center gap-2 pl-2">
+          <div className="w-8 h-8 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-xs ring-2 ring-blue-500/20">
+            {userInitials}
           </div>
         </div>
       </div>

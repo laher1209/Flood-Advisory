@@ -25,13 +25,34 @@ export interface AlertData {
   severity: SeverityLevel;
 }
 
+export interface ShelterContact {
+  name: string;
+  role: string;
+  phone: string;
+}
+
 export interface ShelterData {
   id: string;
   name: string;
   distance: string;
+  distanceKm?: number;
+  direction?: string;
   capacity: number;
+  occupied?: number;
+  availableBeds?: number;
   isOpen: boolean;
   statusText: string;
+  category?: 'school' | 'community' | 'hospital' | 'stadium' | 'camp';
+  address?: string;
+  latitude?: number;
+  longitude?: number;
+  elevationMeters?: number;
+  floodSafetyScore?: number;
+  contact?: ShelterContact;
+  amenities?: string[];
+  verifiedAt?: string;
+  rules?: string[];
+  whatToBring?: string[];
 }
 
 export interface DayForecast {
@@ -53,7 +74,7 @@ export interface EmergencyService {
 export interface MapMarkerData {
   id: string;
   title: string;
-  top: string;
+  top?: string;
   left?: string;
   right?: string;
   bottom?: string;

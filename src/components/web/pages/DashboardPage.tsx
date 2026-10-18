@@ -14,29 +14,45 @@ import {
   SHELTERS_LIST,
   EMERGENCY_SERVICES
 } from '../../../data/mockData';
-import { AlertData, ShelterData } from '../../../types';
+import { AlertData, ShelterData, DayForecast, MetricCardData } from '../../../types';
+import { LiveWeatherResponse } from '../../../services/weatherFloodService';
 
 interface DashboardPageProps {
   onNavigateTab: (tabId: string) => void;
   onNotify: (msg: string) => void;
+  liveData?: LiveWeatherResponse | null;
+  metricCards?: MetricCardData[];
+  alertsList?: AlertData[];
+  forecastDays?: DayForecast[];
+  shelters?: ShelterData[];
 }
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({
   onNavigateTab,
-  onNotify
+  onNotify,
+  liveData,
+  metricCards = METRIC_CARDS,
+  alertsList = RECENT_ALERTS,
+  forecastDays = WEEK_FORECAST,
+  shelters = SHELTERS_LIST
 }) => {
   return (
-    <div className="space-y-6 pb-12">
-      {/* Welcome and Greeting */}
-      <GreetingSection userName="Adeel" />
+    <div className="space-y-6 pb-12 fade-in">
+      {/* Welcome and Greeting with Live Advisory */}
+      <GreetingSection
+        userName="Adeel"
+        location={liveData?.location}
+        advisory={liveData?.floodAdvisory}
+      />
 
       {/* 4 Stat Metric Summary Cards */}
       <StatCardsRow
-        cards={METRIC_CARDS}
+        cards={metricCards}
         onActionClick={(id) => {
           if (id === 'active-alerts') onNavigateTab('alerts');
-          else if (id === 'affected-areas' || id === 'rising-water') onNavigateTab('map');
+          else if (id === 'affected-areas' || id === 'rising-water' || id === 'past-rain') onNavigateTab('map');
           else if (id === 'safe-zones') onNavigateTab('shelters');
+          else if (id === 'flood-risk-index') onNavigateTab('risk-zones');
           else onNotify(`Selected metric: ${id}`);
         }}
       />
@@ -46,12 +62,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         <MapView onSelectMarker={(name) => onNotify(`Selected area: ${name}`)} />
         <div className="lg:col-span-4 flex flex-col gap-5 justify-between">
           <RecentAlerts
-            alerts={RECENT_ALERTS}
+            alerts={alertsList}
             onViewAll={() => onNavigateTab('alerts')}
             onAlertClick={(a: AlertData) => onNotify(`Alert details: ${a.title}`)}
           />
           <ForecastSection
-            forecastDays={WEEK_FORECAST}
+            forecastDays={forecastDays}
             onViewDetails={() => onNavigateTab('forecast')}
           />
         </div>
@@ -60,16 +76,27 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       {/* Bottom Action Panels */}
       <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-purpose="quick-actions-overview">
         <NearestShelters
-          shelters={SHELTERS_LIST}
+          shelters={shelters && shelters.length > 0 ? shelters : SHELTERS_LIST}
           onViewAll={() => onNavigateTab('shelters')}
-          onRouteClick={(s: ShelterData) => onNotify(`Plotting route to ${s.name}...`)}
+          onRouteClick={(s: ShelterData) => {
+            onNotify(`Plotting evacuation route to ${s.name}...`);
+            onNavigateTab('shelters');
+          }}
         />
 
         <RoutePlanner
-          currentLocation="Sector 4, Model Town"
-          targetShelter="Govt High School (1.2 km)"
-          estimatedTime="6 min"
-          onStartNavigation={() => onNavigateTab('route')}
+          currentLocation={liveData?.location?.name || 'Your Location'}
+          targetShelter={
+            shelters && shelters[0]
+              ? `${shelters[0].name} (${shelters[0].distance.split('•')[0]})`
+              : 'Govt High School (1.2 km)'
+          }
+          estimatedTime={
+            shelters && shelters[0]?.distanceKm
+              ? `${Math.max(4, Math.round(shelters[0].distanceKm * 12))} min`
+              : '6 min'
+          }
+          onStartNavigation={() => onNavigateTab('shelters')}
         />
 
         <EmergencyContacts
