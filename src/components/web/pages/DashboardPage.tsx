@@ -59,7 +59,16 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
       {/* Center Monitoring Grid */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6" data-purpose="center-monitoring-section">
-        <MapView onSelectMarker={(name) => onNotify(`Selected area: ${name}`)} />
+        <MapView
+          onSelectMarker={(name) => onNotify(`Selected shelter: ${name}`)}
+          userCoords={
+            liveData?.location
+              ? { lat: liveData.location.latitude, lon: liveData.location.longitude }
+              : undefined
+          }
+          userLocationName={liveData?.location?.name || 'Your Location'}
+          shelters={shelters}
+        />
         <div className="lg:col-span-4 flex flex-col gap-5 justify-between">
           <RecentAlerts
             alerts={alertsList}

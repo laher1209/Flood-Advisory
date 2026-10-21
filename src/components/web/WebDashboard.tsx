@@ -18,7 +18,7 @@ import {
   RECENT_ALERTS,
   WEEK_FORECAST
 } from '../../data/mockData';
-import { AlertData, DayForecast, MetricCardData, ShelterData } from '../../types';
+import { AlertData, DayForecast, MetricCardData, ShelterData, DetectedUserLocation } from '../../types';
 import {
   fetchLiveWeatherAndAdvisory,
   getUserLocation,
@@ -26,6 +26,7 @@ import {
   LiveWeatherResponse
 } from '../../services/weatherFloodService';
 import { getNearbyShelters } from '../../services/shelterService';
+import { LocationPrecisionModal } from './LocationPrecisionModal';
 
 export const WebDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -38,6 +39,9 @@ export const WebDashboard: React.FC = () => {
   const [metricCards, setMetricCards] = useState<MetricCardData[]>(METRIC_CARDS);
   const [nearbyShelters, setNearbyShelters] = useState<ShelterData[]>([]);
   const [isLocating, setIsLocating] = useState<boolean>(false);
+  const [currentUserLocation, setCurrentUserLocation] = useState<DetectedUserLocation | null>(null);
+  const [isPrecisionModalOpen, setIsPrecisionModalOpen] = useState<boolean>(false);
+  const [selectedRouteShelter, setSelectedRouteShelter] = useState<ShelterData | null>(null);
 
   const showNotificationToast = (msg: string) => {
     setFeedbackMessage(msg);
@@ -108,34 +112,46 @@ export const WebDashboard: React.FC = () => {
   };
 
   // Handle Location Auto-detection (GPS + Network/IP fallback)
-  const handleAutoDetectLocation = async (forceRefresh = true) => {
+  const handleAutoDetectLocation = async (forceRefresh = true): Promise<DetectedUserLocation | null> => {
     setIsLocating(true);
-    showNotificationToast('📍 Detecting your exact live GPS location...');
+    showNotificationToast('📍 Detecting high-precision GPS coordinates...');
     try {
       const userLoc = await getUserLocation(forceRefresh);
+      setCurrentUserLocation(userLoc);
       await loadWeatherData(userLoc.lat, userLoc.lon, userLoc.city);
-      const mode =
-        userLoc.source === 'gps'
-          ? `Exact GPS${userLoc.accuracyMeters ? ` ±${userLoc.accuracyMeters}m` : ''}`
-          : userLoc.source === 'ip'
-          ? 'Network'
-          : 'Regional';
-      showNotificationToast(`📍 Located: ${userLoc.city} (${mode}) • Shelters updated`);
+
+      if (userLoc.isPrecise) {
+        showNotificationToast(`📍 Exact GPS locked: ${userLoc.city} (±${userLoc.accuracyMeters}m) • Shelters updated`);
+      } else {
+        showNotificationToast(
+          `📍 Located: ${userLoc.city} (~${Math.round((userLoc.accuracyMeters || 4000) / 1000)}km ISP node) • Calibrate for exact street precision`
+        );
+      }
+      return userLoc;
     } catch (err: any) {
       console.warn('Auto-detect error:', err);
       try {
         const ipLoc = await detectLocationByIp();
         if (ipLoc) {
+          setCurrentUserLocation(ipLoc);
           await loadWeatherData(ipLoc.lat, ipLoc.lon, ipLoc.city);
           showNotificationToast(`📍 Located: ${ipLoc.city} (Network) • Shelters updated`);
-          return;
+          return ipLoc;
         }
       } catch (e) {}
       await loadWeatherData(28.6139, 77.2090, 'Central Safe Zone');
       showNotificationToast('📍 Loaded regional advisory and safe shelters');
+      return null;
     } finally {
       setIsLocating(false);
     }
+  };
+
+  // Apply user-calibrated doorstep location
+  const handleApplyCalibratedLocation = async (loc: DetectedUserLocation) => {
+    setCurrentUserLocation(loc);
+    await loadWeatherData(loc.lat, loc.lon, loc.city);
+    showNotificationToast(`🎯 Doorstep Location Locked: ${loc.city} • Exact shelters re-calculated`);
   };
 
   // Handle city search with global geocoding support
@@ -226,6 +242,8 @@ export const WebDashboard: React.FC = () => {
         <TopHeader
           onSearch={handleSearchLocation}
           onDetectLocation={handleAutoDetectLocation}
+          onOpenPrecisionModal={() => setIsPrecisionModalOpen(true)}
+          userLocation={currentUserLocation}
           isDetectingLocation={isLocating}
           locationName={currentLocationName}
           locationTemp={`${liveData?.current?.temperature ?? 28}°C`}
@@ -254,6 +272,13 @@ export const WebDashboard: React.FC = () => {
               onNotify={showNotificationToast}
               shelters={nearbyShelters}
               userLocationName={currentLocationName}
+              userCoords={
+                currentUserLocation
+                  ? { lat: currentUserLocation.lat, lon: currentUserLocation.lon }
+                  : liveData?.location
+                  ? { lat: liveData.location.latitude, lon: liveData.location.longitude }
+                  : undefined
+              }
             />
           )}
 
@@ -266,15 +291,20 @@ export const WebDashboard: React.FC = () => {
               shelters={nearbyShelters}
               userLocationName={currentLocationName}
               userCoords={
-                liveData?.location
+                currentUserLocation
+                  ? { lat: currentUserLocation.lat, lon: currentUserLocation.lon }
+                  : liveData?.location
                   ? { lat: liveData.location.latitude, lon: liveData.location.longitude }
                   : undefined
               }
+              userLocation={currentUserLocation}
               onNotify={showNotificationToast}
               onDetectLocation={() => handleAutoDetectLocation(true)}
+              onOpenPrecisionModal={() => setIsPrecisionModalOpen(true)}
               isLocating={isLocating}
               onSearchLocation={handleSearchLocation}
               onNavigateToShelter={(shelter) => {
+                setSelectedRouteShelter(shelter);
                 setActiveTab('route');
                 showNotificationToast(`Plotting safe route to ${shelter.name}`);
               }}
@@ -285,7 +315,14 @@ export const WebDashboard: React.FC = () => {
             <RoutePage
               onNotify={showNotificationToast}
               currentLocation={currentLocationName}
-              targetShelter={nearbyShelters[0]}
+              userCoords={
+                currentUserLocation
+                  ? { lat: currentUserLocation.lat, lon: currentUserLocation.lon }
+                  : liveData?.location
+                  ? { lat: liveData.location.latitude, lon: liveData.location.longitude }
+                  : undefined
+              }
+              targetShelter={selectedRouteShelter || nearbyShelters[0]}
             />
           )}
 
@@ -307,6 +344,16 @@ export const WebDashboard: React.FC = () => {
         </main>
       </div>
       {/* END: MainContentArea */}
+
+      {/* Life-Safety Location Precision & GPS Calibrator Modal */}
+      <LocationPrecisionModal
+        isOpen={isPrecisionModalOpen}
+        onClose={() => setIsPrecisionModalOpen(false)}
+        currentLocation={currentUserLocation}
+        onApplyLocation={handleApplyCalibratedLocation}
+        onTriggerGpsRefine={() => handleAutoDetectLocation(true)}
+        isRefiningGps={isLocating}
+      />
     </div>
   );
 };

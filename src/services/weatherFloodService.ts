@@ -1,4 +1,4 @@
-import { DayForecast, AlertData } from '../types';
+import { DayForecast, AlertData, DetectedUserLocation, PreciseAddressResult } from '../types';
 import { WEEK_FORECAST, RECENT_ALERTS } from '../data/mockData';
 
 export interface LiveLocation {
@@ -54,24 +54,29 @@ export interface LiveWeatherResponse {
 // Fallback host if Vite proxy is not used
 const API_BASE = window.location.port === '3000' ? '' : 'http://localhost:5001';
 
-export interface DetectedUserLocation {
-  lat: number;
-  lon: number;
-  city: string;
-  region?: string;
-  country?: string;
-  accuracyMeters?: number;
-  source: 'gps' | 'ip' | 'default';
-}
+import { searchMapboxAddress, reverseGeocodeMapbox } from './mapboxService';
 
 /**
  * Reverse geocodes coordinates to a human-readable neighborhood/city/region name
+ * (Uses Mapbox Geocoding first, falling back to OpenStreetMap Nominatim)
  */
 export async function reverseGeocodeCoords(lat: number, lon: number): Promise<string> {
-  // 1. Try OpenStreetMap Nominatim reverse geocoder for accurate local neighborhood/colony
+  // 1. Try Mapbox Geocoding first for sub-building precision
+  try {
+    const mapboxAddr = await reverseGeocodeMapbox(lat, lon);
+    if (mapboxAddr && !mapboxAddr.startsWith('Coordinates')) {
+      const parts = mapboxAddr.split(',').map((p) => p.trim());
+      // Return short clean locality e.g. "Hazratganj, Lucknow"
+      return parts.slice(0, 2).join(', ');
+    }
+  } catch (e) {
+    console.warn('Mapbox reverse geocoding fallback:', e);
+  }
+
+  // 2. Try OpenStreetMap Nominatim reverse geocoder
   try {
     const osmRes = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=16`,
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=17&addressdetails=1`,
       { headers: { 'User-Agent': 'FloodSafe-App/1.0' } }
     );
     if (osmRes.ok) {
@@ -82,7 +87,8 @@ export async function reverseGeocodeCoords(lat: number, lon: number): Promise<st
           d.address.neighbourhood ||
           d.address.road ||
           d.address.residential ||
-          d.address.commercial;
+          d.address.commercial ||
+          d.address.quarter;
         const city =
           d.address.city ||
           d.address.town ||
@@ -103,7 +109,7 @@ export async function reverseGeocodeCoords(lat: number, lon: number): Promise<st
     console.warn('OSM reverse geocoding error:', e);
   }
 
-  // 2. Fallback to BigDataCloud
+  // 3. Fallback to BigDataCloud
   try {
     const res = await fetch(
       `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
@@ -120,11 +126,66 @@ export async function reverseGeocodeCoords(lat: number, lon: number): Promise<st
   } catch (e) {
     console.warn('Reverse geocoding failed:', e);
   }
-  return `Area (${lat.toFixed(3)}, ${lon.toFixed(3)})`;
+  return `Area (${lat.toFixed(4)}, ${lon.toFixed(4)})`;
 }
 
 /**
- * Detects user coordinates and city using IP geolocation
+ * Searches for exact street, neighborhood, colony, or landmark
+ * (Uses Mapbox Geocoding first, falling back to OpenStreetMap Nominatim)
+ */
+export async function searchPreciseAddress(query: string): Promise<PreciseAddressResult[]> {
+  if (!query || query.trim().length < 2) return [];
+
+  // 1. Try Mapbox Geocoding
+  try {
+    const mapboxResults = await searchMapboxAddress(query);
+    if (mapboxResults && mapboxResults.length > 0) {
+      return mapboxResults;
+    }
+  } catch (e) {
+    console.warn('Mapbox address search fallback:', e);
+  }
+
+  // 2. Fallback to OpenStreetMap Nominatim
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+      query.trim()
+    )}&limit=7&addressdetails=1`;
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'FloodSafe-Emergency-Advisory/1.0' }
+    });
+
+    if (!res.ok) return [];
+
+    const items = await res.json();
+    return items.map((item: any) => {
+      const addr = item.address || {};
+      const short =
+        item.name ||
+        addr.suburb ||
+        addr.neighbourhood ||
+        addr.road ||
+        item.display_name.split(',')[0];
+      return {
+        displayName: item.display_name,
+        shortName: short,
+        lat: parseFloat(item.lat),
+        lon: parseFloat(item.lon),
+        type: item.type,
+        road: addr.road,
+        suburb: addr.suburb || addr.neighbourhood,
+        city: addr.city || addr.town || addr.village,
+        state: addr.state
+      };
+    });
+  } catch (err) {
+    console.warn('[searchPreciseAddress] Search failed:', err);
+    return [];
+  }
+}
+
+/**
+ * Detects user coordinates and city using IP geolocation (coarse fallback)
  */
 export async function detectLocationByIp(): Promise<DetectedUserLocation | null> {
   try {
@@ -139,7 +200,10 @@ export async function detectLocationByIp(): Promise<DetectedUserLocation | null>
           city: data.region ? `${city}, ${data.region}` : city,
           region: data.region,
           country: data.country,
-          source: 'ip'
+          accuracyMeters: 4500, // typical cellular/ISP node radius
+          source: 'ip',
+          isPrecise: false,
+          timestamp: Date.now()
         };
       }
     }
@@ -159,7 +223,10 @@ export async function detectLocationByIp(): Promise<DetectedUserLocation | null>
           city: data.regionName ? `${city}, ${data.regionName}` : city,
           region: data.regionName,
           country: data.countryName,
-          source: 'ip'
+          accuracyMeters: 5000,
+          source: 'ip',
+          isPrecise: false,
+          timestamp: Date.now()
         };
       }
     }
@@ -171,18 +238,100 @@ export async function detectLocationByIp(): Promise<DetectedUserLocation | null>
 }
 
 /**
- * Automatically detects the user's location via GPS (with multi-tier high/low accuracy)
- * and falls back to IP-based network location without hardcoded city locks
+ * Actively watches and refines device GPS for maximum precision down to doorstep accuracy
+ */
+function acquireHighAccuracyGps(
+  timeoutMs = 12000,
+  targetAccuracyMeters = 25
+): Promise<GeolocationPosition | null> {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+
+    let bestPosition: GeolocationPosition | null = null;
+    let watchId: number | null = null;
+    let timer: any = null;
+
+    const cleanup = () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    // Timeout safety
+    timer = setTimeout(() => {
+      cleanup();
+      resolve(bestPosition);
+    }, timeoutMs);
+
+    // Watch position allows modern phone & laptop GPS to acquire satellites and drop error circle
+    try {
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          if (!bestPosition || pos.coords.accuracy < bestPosition.coords.accuracy) {
+            bestPosition = pos;
+          }
+          // If we reach satellite precision (<= targetAccuracyMeters), lock immediately!
+          if (pos.coords.accuracy <= targetAccuracyMeters) {
+            cleanup();
+            resolve(pos);
+          }
+        },
+        (err) => {
+          console.warn('watchPosition notice:', err.message);
+          // If watch fails immediately, try single getCurrentPosition as quick fallback
+          if (!bestPosition) {
+            navigator.geolocation.getCurrentPosition(
+              (p) => {
+                cleanup();
+                resolve(p);
+              },
+              () => {
+                cleanup();
+                resolve(null);
+              },
+              { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+            );
+          }
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: timeoutMs,
+          maximumAge: 0 // Never use stale cached coordinates for emergency navigation
+        }
+      );
+    } catch (e) {
+      cleanup();
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Automatically detects the user's location via high-precision GPS (Phone & Laptop)
+ * with multi-tier refinement and clear precision diagnostics.
  */
 export async function getUserLocation(forceRefresh = false): Promise<DetectedUserLocation> {
-  // Check if user already has an exact location stored in localStorage (unless force refreshed)
+  // Check if user already has a HIGH-PRECISION location stored in localStorage
   if (!forceRefresh) {
     try {
       const saved = localStorage.getItem('floodsafe_exact_user_location');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.lat && parsed.lon && parsed.city) {
-          // If saved within the last 1 hour, use it for instant responsive load
+        // Only reuse cache if it's manual or high-precision GPS (not coarse IP estimate)
+        if (
+          parsed.lat &&
+          parsed.lon &&
+          parsed.city &&
+          (parsed.source === 'manual' || (parsed.source === 'gps' && parsed.accuracyMeters && parsed.accuracyMeters <= 50))
+        ) {
           if (Date.now() - (parsed.timestamp || 0) < 60 * 60 * 1000) {
             return parsed;
           }
@@ -193,64 +342,52 @@ export async function getUserLocation(forceRefresh = false): Promise<DetectedUse
     }
   }
 
-  // Geolocation query helper
-  const queryBrowserGps = (highAccuracy: boolean, timeoutMs: number) => {
-    return new Promise<GeolocationPosition | null>((resolve) => {
-      if (!navigator.geolocation) {
-        resolve(null);
-        return;
-      }
+  // Tier 1: High-precision GPS with satellite lock & watchPosition refinement
+  let pos = await acquireHighAccuracyGps(10000, 20);
+
+  // Tier 2: If high-accuracy timed out (common on desktop/laptops with Wi-Fi only), try fast Wi-Fi triangulation
+  if (!pos) {
+    pos = await new Promise<GeolocationPosition | null>((resolve) => {
+      if (!navigator.geolocation) return resolve(null);
       navigator.geolocation.getCurrentPosition(
-        (pos) => resolve(pos),
+        (p) => resolve(p),
         (err) => {
-          console.warn(`Browser GPS (highAccuracy=${highAccuracy}) notice:`, err.message);
+          console.warn('Coarse Wi-Fi geolocation notice:', err.message);
           resolve(null);
         },
-        { timeout: timeoutMs, enableHighAccuracy: highAccuracy, maximumAge: 5000 }
+        { enableHighAccuracy: false, timeout: 6000, maximumAge: 0 }
       );
     });
-  };
-
-  // Tier 1: Try high-precision GPS (10s timeout)
-  let pos = await queryBrowserGps(true, 10000);
-
-  // Tier 2: If high-accuracy timed out (common on desktop/Windows), try fast low-accuracy (Wi-Fi/Cellular)
-  if (!pos) {
-    pos = await queryBrowserGps(false, 6000);
   }
 
   if (pos) {
     const lat = pos.coords.latitude;
     const lon = pos.coords.longitude;
-    const accuracy = pos.coords.accuracy ? Math.round(pos.coords.accuracy) : undefined;
+    const accuracy = pos.coords.accuracy ? Math.round(pos.coords.accuracy) : 30;
     const cityName = await reverseGeocodeCoords(lat, lon);
+    const isPrecise = accuracy <= 100;
+    const source: DetectedUserLocation['source'] = accuracy <= 40 ? 'gps' : 'wifi';
+
     const locResult: DetectedUserLocation = {
       lat,
       lon,
       city: cityName,
       accuracyMeters: accuracy,
-      source: 'gps'
+      source,
+      isPrecise,
+      timestamp: Date.now()
     };
 
     try {
-      localStorage.setItem(
-        'floodsafe_exact_user_location',
-        JSON.stringify({ ...locResult, timestamp: Date.now() })
-      );
+      localStorage.setItem('floodsafe_exact_user_location', JSON.stringify(locResult));
     } catch (e) {}
 
     return locResult;
   }
 
-  // Tier 3: Seamlessly try IP-based network geolocation
+  // Tier 3: IP-based network geolocation (Clearly flagged as imprecise ISP estimate)
   const ipLocation = await detectLocationByIp();
   if (ipLocation) {
-    try {
-      localStorage.setItem(
-        'floodsafe_exact_user_location',
-        JSON.stringify({ ...ipLocation, timestamp: Date.now() })
-      );
-    } catch (e) {}
     return ipLocation;
   }
 
@@ -259,8 +396,36 @@ export async function getUserLocation(forceRefresh = false): Promise<DetectedUse
     lat: 28.6139,
     lon: 77.2090,
     city: 'Central Safe Zone',
-    source: 'default'
+    accuracyMeters: 10000,
+    source: 'default',
+    isPrecise: false,
+    timestamp: Date.now()
   };
+}
+
+/**
+ * Saves a user-calibrated exact doorstep location
+ */
+export function setManualExactLocation(
+  lat: number,
+  lon: number,
+  cityName: string
+): DetectedUserLocation {
+  const loc: DetectedUserLocation = {
+    lat,
+    lon,
+    city: cityName,
+    accuracyMeters: 5,
+    source: 'manual',
+    isPrecise: true,
+    timestamp: Date.now()
+  };
+
+  try {
+    localStorage.setItem('floodsafe_exact_user_location', JSON.stringify(loc));
+  } catch (e) {}
+
+  return loc;
 }
 
 /**

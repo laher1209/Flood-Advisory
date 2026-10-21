@@ -81,3 +81,28 @@ export interface MapMarkerData {
   type: 'warning' | 'safe' | 'severe' | 'standard';
   hasPulse?: boolean;
 }
+
+export interface DetectedUserLocation {
+  lat: number;
+  lon: number;
+  city: string;
+  region?: string;
+  country?: string;
+  accuracyMeters?: number;
+  source: 'gps' | 'wifi' | 'ip' | 'manual' | 'default';
+  isPrecise?: boolean;
+  timestamp?: number;
+  errorDetails?: string;
+}
+
+export interface PreciseAddressResult {
+  displayName: string;
+  shortName: string;
+  lat: number;
+  lon: number;
+  type?: string;
+  road?: string;
+  suburb?: string;
+  city?: string;
+  state?: string;
+}

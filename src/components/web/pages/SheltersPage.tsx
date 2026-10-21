@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import { Badge } from './Badge';
-import { ShelterData } from '../../../types';
+import { ShelterData, DetectedUserLocation } from '../../../types';
 import { SHELTERS_LIST } from '../../../data/mockData';
 
 interface SheltersPageProps {
   shelters?: ShelterData[];
   userLocationName?: string;
   userCoords?: { lat: number; lon: number };
+  userLocation?: DetectedUserLocation | null;
   onNotify?: (msg: string) => void;
   onNavigateToShelter?: (shelter: ShelterData) => void;
-  onDetectLocation?: () => Promise<void> | void;
+  onDetectLocation?: () => Promise<any> | void;
+  onOpenPrecisionModal?: () => void;
   isLocating?: boolean;
   onSearchLocation?: (query: string) => Promise<void> | void;
 }
@@ -18,9 +20,11 @@ export const SheltersPage: React.FC<SheltersPageProps> = ({
   shelters = SHELTERS_LIST,
   userLocationName = 'Your Location',
   userCoords,
+  userLocation,
   onNotify,
   onNavigateToShelter,
   onDetectLocation,
+  onOpenPrecisionModal,
   isLocating = false,
   onSearchLocation
 }) => {
@@ -29,6 +33,10 @@ export const SheltersPage: React.FC<SheltersPageProps> = ({
   const [activeModalShelter, setActiveModalShelter] = useState<ShelterData | null>(null);
   const [customLocationInput, setCustomLocationInput] = useState<string>('');
   const [showLocationInput, setShowLocationInput] = useState<boolean>(false);
+
+  const isCoarse =
+    userLocation &&
+    (!userLocation.isPrecise || (userLocation.accuracyMeters && userLocation.accuracyMeters > 200) || userLocation.source === 'ip');
 
   const displayList = shelters.length > 0 ? shelters : SHELTERS_LIST;
 
@@ -100,7 +108,8 @@ export const SheltersPage: React.FC<SheltersPageProps> = ({
               </span>
               {userCoords && (
                 <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-blue-900/60 text-blue-200 border border-blue-400/30">
-                  🛰️ GPS: {userCoords.lat.toFixed(4)}°N, {userCoords.lon.toFixed(4)}°E
+                  🛰️ GPS: {userCoords.lat.toFixed(5)}°N, {userCoords.lon.toFixed(5)}°E
+                  {userLocation?.accuracyMeters ? ` (±${userLocation.accuracyMeters}m)` : ''}
                 </span>
               )}
             </div>
@@ -131,13 +140,24 @@ export const SheltersPage: React.FC<SheltersPageProps> = ({
               >
                 <path d="M12 2v2m0 16v2m10-10h-2M4 12H2m15.071-7.071l-1.414 1.414M8.343 15.657l-1.414 1.414m11.314 0l-1.414-1.414M8.343 8.343L6.929 6.929M12 16a4 4 0 100-8 4 4 0 000 8z" />
               </svg>
-              <span>{isLocating ? 'Acquiring GPS...' : '📍 Use My Exact Location'}</span>
+              <span>{isLocating ? 'Acquiring GPS...' : '📍 Use Live GPS'}</span>
             </button>
+
+            {/* Precision Calibrator Button */}
+            {onOpenPrecisionModal && (
+              <button
+                onClick={onOpenPrecisionModal}
+                className="px-3.5 py-2.5 rounded-xl text-xs font-bold bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 transition-all flex items-center justify-center gap-1.5 shadow-md"
+                title="Calibrate exact doorstep location or street address"
+              >
+                <span>🎯 Doorstep Precision</span>
+              </button>
+            )}
 
             {/* Manual Change Location Button */}
             <button
               onClick={() => setShowLocationInput((prev) => !prev)}
-              className="px-3.5 py-2.5 rounded-xl text-xs font-semibold bg-white/10 hover:bg-white/20 border border-white/20 transition-all flex items-center justify-center gap-1.5 text-white"
+              className="px-3 py-2.5 rounded-xl text-xs font-semibold bg-white/10 hover:bg-white/20 border border-white/20 transition-all flex items-center justify-center gap-1.5 text-white"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" strokeLinecap="round" strokeLinejoin="round" />
@@ -146,6 +166,32 @@ export const SheltersPage: React.FC<SheltersPageProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Life-Safety Imprecise Location Warning Banner */}
+        {isCoarse && (
+          <div className="mt-4 p-3.5 rounded-xl bg-amber-500/20 border border-amber-300/40 backdrop-blur-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-amber-100">
+            <div className="flex items-start gap-2.5">
+              <span className="text-xl">⚠️</span>
+              <div>
+                <div className="text-xs font-bold text-white flex items-center gap-2">
+                  <span>Imprecise Location Alert: Network/ISP Estimate (~{userLocation?.accuracyMeters ? Math.round(userLocation.accuracyMeters / 1000) : 4} km radius)</span>
+                  <span className="px-1.5 py-0.2 rounded bg-amber-400/30 text-amber-200 text-[10px] font-mono uppercase">Crucial</span>
+                </div>
+                <p className="text-[11px] text-amber-100/90 mt-0.5">
+                  Your laptop or network is reporting an approximate telecom node. In a flood, being off by 500m can route through flooded underpasses. Click to calibrate your exact street or building.
+                </p>
+              </div>
+            </div>
+            {onOpenPrecisionModal && (
+              <button
+                onClick={onOpenPrecisionModal}
+                className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg text-xs font-bold transition-all flex-shrink-0 shadow-sm"
+              >
+                🎯 Calibrate Doorstep Now
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Optional Collapsible Location Search Bar */}
         {showLocationInput && (

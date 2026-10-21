@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
+import { DetectedUserLocation } from '../../types';
 
 interface TopHeaderProps {
   onSearch?: (query: string) => void;
   onNotificationClick?: () => void;
-  onDetectLocation?: () => void;
+  onDetectLocation?: () => void | Promise<any>;
+  onOpenPrecisionModal?: () => void;
+  userLocation?: DetectedUserLocation | null;
   userName?: string;
   userInitials?: string;
   locationName?: string;
@@ -18,6 +21,8 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
   onSearch,
   onNotificationClick,
   onDetectLocation,
+  onOpenPrecisionModal,
+  userLocation,
   userName = 'Adeel Khan',
   userInitials = 'AK',
   locationName = 'Detecting Location...',
@@ -46,14 +51,17 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
     }
   };
 
+  const isPrecise = userLocation?.isPrecise || (userLocation?.accuracyMeters && userLocation.accuracyMeters <= 50);
+  const accuracy = userLocation?.accuracyMeters;
+
   return (
     <header
       className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between flex-shrink-0 sticky top-0 z-30"
       data-purpose="top-navigation-bar"
     >
       {/* Search & Location Bar */}
-      <div className="flex items-center gap-3">
-        <form onSubmit={handleSearchSubmit} className="w-80 relative">
+      <div className="flex items-center gap-2.5">
+        <form onSubmit={handleSearchSubmit} className="w-64 md:w-72 relative">
           <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeLinecap="round" strokeLinejoin="round" />
@@ -63,7 +71,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             value={searchVal}
             onChange={(e) => setSearchVal(e.target.value)}
             className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-full text-xs text-slate-700 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-            placeholder="Search city (e.g. Mumbai, Delhi, Ludhiana)..."
+            placeholder="Search neighborhood or city..."
             type="text"
           />
         </form>
@@ -72,14 +80,35 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
         <button
           onClick={onDetectLocation}
           disabled={isDetectingLocation}
-          title="Detect my current location via GPS"
+          title="Detect live location via device GPS"
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 transition-colors disabled:opacity-60"
         >
           <svg className={`w-3.5 h-3.5 ${isDetectingLocation ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
             <path d="M12 2v2m0 16v2m10-10h-2M4 12H2m15.071-7.071l-1.414 1.414M8.343 15.657l-1.414 1.414m11.314 0l-1.414-1.414M8.343 8.343L6.929 6.929M12 16a4 4 0 100-8 4 4 0 000 8z" />
           </svg>
-          <span className="hidden md:inline">{isDetectingLocation ? 'Locating...' : 'Auto-Detect'}</span>
+          <span className="hidden sm:inline">{isDetectingLocation ? 'Locating...' : 'Live GPS'}</span>
         </button>
+
+        {/* Precision Status & Calibrator Trigger */}
+        {onOpenPrecisionModal && (
+          <button
+            onClick={onOpenPrecisionModal}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
+              isPrecise
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 shadow-sm animate-pulse'
+            }`}
+            title="Open Precision Location & Doorstep GPS Calibrator"
+          >
+            <span className={`w-2 h-2 rounded-full ${isPrecise ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+            <span className="hidden md:inline">
+              {isPrecise
+                ? `GPS ±${accuracy || 15}m`
+                : `⚠️ Coarse Location • Calibrate`}
+            </span>
+            <span className="md:hidden">🎯</span>
+          </button>
+        )}
       </div>
 
       {/* Right Header Actions */}
